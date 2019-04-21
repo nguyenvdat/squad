@@ -102,34 +102,39 @@ class InputEmbedding(nn.Module):
 class NormLayer(nn.Module):
     """ Perform layer normalization with learnable weights
     """
-    def __init__(self, input_size, eps=1e-6):
-        super(NormLayer, self).__init__(self)
+    def __init__(self, input_size, eps=1e-6, dim=-1):
+        super(NormLayer, self).__init__()
+        input_size = (1, 1, input_size) if dim == -1 else (1, input_size, 1)
         self.g = nn.Parameter(torch.ones(input_size))
         self.b = nn.Parameter(torch.zeros(input_size))
         self.eps = eps  
+        self.dim = dim
     
     def forward(self, x):
-        mean = torch.mean(x, -1, keepdim=True)
-        std = torch.std(x, -1, keepdim=True)
+        mean = torch.mean(x, self.dim, keepdim=True)
+        std = torch.std(x, self.dim, keepdim=True)
         return self.g * (x - mean) / (std + self.eps) + self.b
 
 class ResNormLayer(nn.Module):
     """ for an input x add x to the output of applying consecutively n times f_layer to normalized x
     """
-    def __init__(self, input_size, f_layer, dropout, n=None):
+    def __init__(self, input_size, f_layer, dropout, n=None, dim=-1):
         super(ResNormLayer, self).__init__()
         if n is None:
             n = 1
         self.f_layers = clones(f_layer, n)
-        self.norm_layer = NormLayer(input_size)
+        self.norm_layer = NormLayer(input_size, dim=dim)
         self.dropout = nn.Dropout(dropout)
     
-    def forward(self, x):
+    def forward(self, x, **kwargs):
         old_x = x
         x = self.norm_layer(x)
         for l in self.f_layers:
-            x = l(x)
-        return self.dropout(x) + old_x
+            if len(kwargs) > 0:
+                x = l(x, kwargs['y'])
+            else:
+                x = l(x)
+        return self.dropout(x + old_x)
 
 class DepthwiseSeparableConvLayer(nn.Module):
     def __init__(self, d_word, k, d_conv, dropout):
@@ -137,6 +142,8 @@ class DepthwiseSeparableConvLayer(nn.Module):
         self.depthwise_conv = nn.Conv1d(d_word, d_word, k, groups=d_word, padding=k//2,bias=False)  
         self.pointwise_conv = nn.Conv1d(d_word, d_conv, 1, bias=True)
         self.dropout = nn.Dropout(dropout)
+        nn.init.kaiming_normal_(self.depthwise_conv.weight)
+        nn.init.kaiming_normal_(self.pointwise_conv.weight)
     
     def forward(self, x):
         return self.dropout(F.relu(self.pointwise_conv(self.depthwise_conv(x))))
@@ -151,7 +158,7 @@ class AttentionLayer(nn.Module):
         self.query_linear = nn.Linear(d_conv, d_attention)
         self.key_linear = nn.Linear(d_conv, d_attention)
         self.value_linear = nn.Linear(d_conv, d_attention)
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, y):
         query = self.query_linear(x) # (batch_size, len_sentence_x, d_attention)
@@ -162,7 +169,7 @@ class AttentionLayer(nn.Module):
         return torch.matmul(scores, value) # (batch_size, len_sentence_x,  d_attention)
 
 def clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for _ in N])
+    return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 class MultiHeadAttentionLayer(nn.Module):
     def __init__(self, n_head, d_conv, d_attention, mask=None, dropout=None):
@@ -178,26 +185,29 @@ class FeedForwardLayer(nn.Module):
     def __init__(self, d_in, d_out, dropout):
         super(FeedForwardLayer, self).__init__()
         self.linear = nn.Linear(d_in, d_out)
+        nn.init.kaiming_normal_(self.linear.weight)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         return self.dropout(F.relu(self.linear(x)))
 
 class EmbeddingEncoderLayer(nn.Module):
-    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, mask, dropout):
+    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, mask=None):
         super(EmbeddingEncoderLayer, self).__init__()
         self.input_conv = nn.Conv1d(d_word, d_conv, 1)
-        depthwise_conv = DepthwiseSeparableConvLayer(d_word, 7, d_conv, dropout)
-        self.depthwise_conv_layers = ResNormLayer(d_conv, depthwise_conv, dropout, n_conv)
-        multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention, mask)
+        depthwise_conv = DepthwiseSeparableConvLayer(d_conv, 7, d_conv, dropout)
+        self.depthwise_conv_layers = ResNormLayer(d_conv, depthwise_conv, dropout, n_conv, dim=-2)
+        multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention, mask, dropout)
         self.multihead_attention_layer = ResNormLayer(d_conv, multihead_attention, dropout)
-        feed_forward_layer = FeedForwardLayer(d_attention, d_out, dropout)
+        feed_forward_layer = FeedForwardLayer(d_attention * n_head, d_out, dropout)
         self.feed_forward_layer = ResNormLayer(d_conv, feed_forward_layer, dropout)
 
     def forward(self, x):
+        x = x.transpose(-1, -2)
         x = self.input_conv(x)
         x = self.depthwise_conv_layers(x)
-        x = self.multihead_attention_layer(x, x)
+        x = x.transpose(-1, -2)
+        x = self.multihead_attention_layer(x, y=x)
         x = self.feed_forward_layer(x)
         return x
 
