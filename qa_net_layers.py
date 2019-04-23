@@ -289,3 +289,18 @@ class ModelEncoderLayer(nn.Module):
         m1 = self.encoder_layer(m0)
         m2 = self.encoder_layer(m1)
         return m0, m1, m2
+
+class OutputLayer(nn.Module):
+    def __init__(self, input_size):
+        super(OutputLayer, self).__init__()
+        self.linear1 = nn.Linear(input_size * 2, 1)
+        self.linear2 = nn.Linear(input_size * 2, 1)
+    
+    def forward(self, m0, m1, m2, mask):
+        logits_1 = self.linear1(torch.cat((m0, m1), 2)) # (batch_size, n_context, 1)
+        print(logits_1.size())
+        logits_2 = self.linear2(torch.cat((m0, m2), 2)) # (batch_size, n_context, 1)
+        print(logits_2.size())
+        log_p1 = masked_softmax(logits_1.squeeze(), mask, log_softmax=True)
+        log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
+        return log_p1, log_p2

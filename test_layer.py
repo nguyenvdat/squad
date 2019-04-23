@@ -25,7 +25,8 @@ def main():
     # test_input_embedding()
     # test_embedding_encoder()
     # test_context_query_attention()
-    test_model_encoder()
+    # test_model_encoder()
+    test_output_layer()
     
 def test_input_embedding():
     args = get_setup_args()
@@ -113,6 +114,16 @@ def test_model_encoder():
     assert m0.size() == (2, 5, 512)
     assert m1.size() == (2, 5, 512)
     assert m2.size() == (2, 5, 512)
+
+def test_output_layer():
+    m0 = torch.rand(2, 3, 5)
+    m1 = torch.rand(2, 3, 5)
+    m2 = torch.rand(2, 3, 5)
+    mask = torch.tensor([[1, 1, 1], [1, 1, 0]])
+    output_layer = OutputLayer(5)
+    log_p1, log_p2 = output_layer(m0, m1, m2, mask)
+    print(log_p1)
+    print(log_p2)
 
 if __name__ == '__main__':
     main()
