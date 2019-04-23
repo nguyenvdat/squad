@@ -23,7 +23,8 @@ import pickle
 
 def main():
     # test_input_embedding()
-    test_embedding_encoder()
+    # test_embedding_encoder()
+    test_context_query_attention()
     
 def test_input_embedding():
     args = get_setup_args()
@@ -82,6 +83,15 @@ def test_embedding_encoder():
     output = embedding_encoder(x)
     assert output.size() == (2, 3, 128)
     return output
+
+def test_context_query_attention():
+    context = torch.tensor([[[1, 2, 2, 0], [1, 3, 2, 3], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], [[1, 5, 2, 0], [1, 3, 6, 3], [3, 4, 2, 1], [0, 0, 0, 0], [0, 0, 0, 0]]], dtype=torch.float32)
+    query = torch.tensor([[[1, 2, 2, 0], [1, 3, 2, 3], [0, 0, 0, 0]], [[1, 5, 2, 0], [1, 3, 6, 3], [3, 4, 2, 1]]], dtype=torch.float32)
+    c_mask = torch.tensor([[1, 1, 1, 1, 0], [1, 1, 1, 0, 0]])
+    q_mask = torch.tensor([[1, 1, 0], [1, 1, 1]])
+    context_query_attention = ContextQueryAttentionLayer(4)
+    x = context_query_attention(context, query, c_mask, q_mask)
+    assert x.size() == (2, 5, 16)
 
 if __name__ == '__main__':
     main()
