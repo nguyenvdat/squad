@@ -191,9 +191,9 @@ class FeedForwardLayer(nn.Module):
     def forward(self, x):
         return self.dropout(F.relu(self.linear(x)))
 
-class EmbeddingEncoderLayer(nn.Module):
+class EncoderBlock(nn.Module):
     def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, mask=None):
-        super(EmbeddingEncoderLayer, self).__init__()
+        super(EncoderBlock, self).__init__()
         self.input_conv = nn.Conv1d(d_word, d_conv, 1)
         depthwise_conv = DepthwiseSeparableConvLayer(d_conv, 7, d_conv, dropout)
         self.depthwise_conv_layers = ResNormLayer(d_conv, depthwise_conv, dropout, n_conv, dim=-2)
@@ -209,6 +209,23 @@ class EmbeddingEncoderLayer(nn.Module):
         x = x.transpose(-1, -2)
         x = self.multihead_attention_layer(x, y=x)
         x = self.feed_forward_layer(x)
+        return x
+
+class EncoderLayer(nn.Module):
+    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head,   dropout, n_block=1, mask=None):
+        super(EncoderLayer, self).__init__()
+        blocks = []
+        for i in range(n_block):
+            if i == 0:
+                encoder_block = EncoderBlock(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, mask)
+            else:
+                encoder_block = EncoderBlock(d_conv, d_conv, d_attention, d_out, n_conv, n_head, dropout, mask)
+            blocks.append(encoder_block)
+        self.encoder_blocks = nn.ModuleList(blocks)
+    
+    def forward(self, x):
+        for encoder_block in self.encoder_blocks:
+            x = encoder_block(x)
         return x
 
 class ContextQueryAttentionLayer(nn.Module):
@@ -261,3 +278,14 @@ class ContextQueryAttentionLayer(nn.Module):
         s = s0 + s1 + s2 + self.bias
 
         return s
+
+class ModelEncoderLayer(nn.Module):
+    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block, mask=None):
+        super(ModelEncoderLayer, self).__init__()
+        self.encoder_layer = EncoderLayer(d_word,d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block, mask)
+
+    def forward(self, x):
+        m0 = self.encoder_layer(x)
+        m1 = self.encoder_layer(m0)
+        m2 = self.encoder_layer(m1)
+        return m0, m1, m2

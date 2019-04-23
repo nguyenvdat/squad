@@ -24,7 +24,8 @@ import pickle
 def main():
     # test_input_embedding()
     # test_embedding_encoder()
-    test_context_query_attention()
+    # test_context_query_attention()
+    test_model_encoder()
     
 def test_input_embedding():
     args = get_setup_args()
@@ -79,19 +80,39 @@ def test_embedding_encoder():
     assert x.size() == (2, 3, 128) 
 
     x = old_x
-    embedding_encoder = EmbeddingEncoderLayer(d_word,d_conv, d_attention, d_out, n_conv, n_head, dropout)
+    embedding_encoder = EncoderLayer(d_word,d_conv, d_attention, d_out, n_conv, n_head, dropout)
     output = embedding_encoder(x)
     assert output.size() == (2, 3, 128)
     return output
 
 def test_context_query_attention():
-    context = torch.tensor([[[1, 2, 2, 0], [1, 3, 2, 3], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], [[1, 5, 2, 0], [1, 3, 6, 3], [3, 4, 2, 1], [0, 0, 0, 0], [0, 0, 0, 0]]], dtype=torch.float32)
-    query = torch.tensor([[[1, 2, 2, 0], [1, 3, 2, 3], [0, 0, 0, 0]], [[1, 5, 2, 0], [1, 3, 6, 3], [3, 4, 2, 1]]], dtype=torch.float32)
+    context = torch.rand(2, 5, 4)
+    query = torch.rand(2, 3, 4)
     c_mask = torch.tensor([[1, 1, 1, 1, 0], [1, 1, 1, 0, 0]])
     q_mask = torch.tensor([[1, 1, 0], [1, 1, 1]])
     context_query_attention = ContextQueryAttentionLayer(4)
     x = context_query_attention(context, query, c_mask, q_mask)
     assert x.size() == (2, 5, 16)
+    return x
+
+def test_model_encoder():
+    d_word = 128 * 4
+    d_conv = 128 * 4
+    d_attention = 64
+    d_out = 128 * 4
+    n_conv = 2
+    n_head = 8
+    mask = None
+    dropout = 0.1
+
+    x = torch.rand(2, 5, 128 * 4)
+
+    model_encoder = ModelEncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block=7)
+
+    m0, m1, m2 = model_encoder(x)
+    assert m0.size() == (2, 5, 512)
+    assert m1.size() == (2, 5, 512)
+    assert m2.size() == (2, 5, 512)
 
 if __name__ == '__main__':
     main()
