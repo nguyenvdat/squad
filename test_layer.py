@@ -11,9 +11,9 @@ import util
 from args import get_train_args, get_setup_args
 from collections import OrderedDict
 from json import dumps
-from models import BiDAF
-from tensorboardX import SummaryWriter
-from tqdm import tqdm
+from models import BiDAF, QANet
+# from tensorboardX import SummaryWriter
+# from tqdm import tqdm
 from ujson import load as json_load
 from util import collate_fn, SQuAD
 import layers
@@ -26,7 +26,8 @@ def main():
     # test_embedding_encoder()
     # test_context_query_attention()
     # test_model_encoder()
-    test_output_layer()
+    # test_output_layer()
+    test_model()
     
 def test_input_embedding():
     args = get_setup_args()
@@ -61,10 +62,11 @@ def test_embedding_encoder():
     mask = None
     dropout = 0.1
 
+    mask = torch.tensor([[1, 1, 0], [1, 1, 1]])
     input_conv = nn.Conv1d(d_word, d_conv, 1)
     depthwise_conv = DepthwiseSeparableConvLayer(d_conv, 7, d_conv, dropout)
     depthwise_conv_layers = ResNormLayer(d_conv, depthwise_conv, dropout, n_conv, dim=-2)
-    multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention, mask, dropout)
+    multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention, dropout)
     multihead_attention_layer = ResNormLayer(d_conv, multihead_attention, dropout)
     feed_forward_layer = FeedForwardLayer(d_attention * n_head, d_out, dropout)
     feed_forward_layer = ResNormLayer(d_conv, feed_forward_layer, dropout)
@@ -75,14 +77,14 @@ def test_embedding_encoder():
     x = depthwise_conv_layers(x)
     x = x.transpose(-1, -2)
     assert x.size() == (2, 3, 128)
-    x = multihead_attention_layer(x, y=x)
+    x = multihead_attention_layer(x, y=x, mask=mask)
     assert x.size() == (2, 3, 128) 
     x = feed_forward_layer(x)
     assert x.size() == (2, 3, 128) 
-
+    
     x = old_x
     embedding_encoder = EncoderLayer(d_word,d_conv, d_attention, d_out, n_conv, n_head, dropout)
-    output = embedding_encoder(x)
+    output = embedding_encoder(x, mask)
     assert output.size() == (2, 3, 128)
     return output
 
@@ -103,14 +105,14 @@ def test_model_encoder():
     d_out = 128 * 4
     n_conv = 2
     n_head = 8
-    mask = None
+    mask = torch.tensor([[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]])
     dropout = 0.1
 
     x = torch.rand(2, 5, 128 * 4)
 
     model_encoder = ModelEncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block=7)
 
-    m0, m1, m2 = model_encoder(x)
+    m0, m1, m2 = model_encoder(x, mask)
     assert m0.size() == (2, 5, 512)
     assert m1.size() == (2, 5, 512)
     assert m2.size() == (2, 5, 512)
@@ -124,6 +126,23 @@ def test_output_layer():
     log_p1, log_p2 = output_layer(m0, m1, m2, mask)
     print(log_p1)
     print(log_p2)
+
+def test_model():
+    args = get_setup_args()
+    word_vectors = util.torch_from_json(args.word_emb_file)
+    with open(args.char2idx_file, "r") as f:
+        char2idx = json_load(f)
+    model = QANet(word_vectors, char2idx)
+    cw_idxs = torch.randint(2, 1000, (64, 374))
+    cc_idxs = torch.randint(2, 50, (64, 374, 200))
+    qw_idxs = torch.randint(2, 1000, (64, 70))
+    qc_idxs = torch.randint(2, 50, (64, 70, 200))
+    cw_idxs[:, 0] = 1
+    cw_idxs[3, -1] = 0
+    qw_idxs[:, 0] = 1
+    qw_idxs[3, -1] = 0
+    out = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
+    print(out)
 
 if __name__ == '__main__':
     main()

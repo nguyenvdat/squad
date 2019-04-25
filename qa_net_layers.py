@@ -131,7 +131,7 @@ class ResNormLayer(nn.Module):
         x = self.norm_layer(x)
         for l in self.f_layers:
             if len(kwargs) > 0:
-                x = l(x, kwargs['y'])
+                x = l(x, kwargs['y'], kwargs['mask'])
             else:
                 x = l(x)
         return self.dropout(x + old_x)
@@ -149,36 +149,36 @@ class DepthwiseSeparableConvLayer(nn.Module):
         return self.dropout(F.relu(self.pointwise_conv(self.depthwise_conv(x))))
 
 class AttentionLayer(nn.Module):
-    def __init__(self, d_conv, d_attention, mask=None, dropout=None):
+    def __init__(self, d_conv, d_attention, dropout=None):
         super(AttentionLayer, self).__init__()
         assert d_conv % d_attention == 0
         self.d_attention = d_attention
-        self.mask = mask
         self.dropout = dropout
         self.query_linear = nn.Linear(d_conv, d_attention)
         self.key_linear = nn.Linear(d_conv, d_attention)
         self.value_linear = nn.Linear(d_conv, d_attention)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, y):
+    def forward(self, x, y, mask):
         query = self.query_linear(x) # (batch_size, len_sentence_x, d_attention)
         key = self.key_linear(y) # (batch_size, len_sentence_y, d_attention)
         value = self.value_linear(y) # (batch_size, len_sentence_y, d_attention)
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_attention)
-        scores = F.softmax(scores, -1) # (batch_size, len_sentence_x, len_sentence_y)
+        mask = torch.unsqueeze(mask, 1)
+        scores = masked_softmax(scores, mask, -1) # (batch_size, len_sentence_x, len_sentence_y)
         return torch.matmul(scores, value) # (batch_size, len_sentence_x,  d_attention)
 
 def clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 class MultiHeadAttentionLayer(nn.Module):
-    def __init__(self, n_head, d_conv, d_attention, mask=None, dropout=None):
+    def __init__(self, n_head, d_conv, d_attention, dropout=None):
         super(MultiHeadAttentionLayer, self).__init__()
-        attention_layer = AttentionLayer(d_conv, d_attention, mask, dropout)
+        attention_layer = AttentionLayer(d_conv, d_attention, dropout)
         self.attention_layers = clones(attention_layer, n_head)
 
-    def forward(self, x, y):
-        attention_heads = [attention_layer(x, y) for attention_layer in self.attention_layers]
+    def forward(self, x, y, mask):
+        attention_heads = [attention_layer(x, y, mask) for attention_layer in self.attention_layers]
         return torch.cat(attention_heads, 2) # (batch_size, len_sentence_x, d_attention * n_head)
 
 class FeedForwardLayer(nn.Module):
@@ -192,40 +192,40 @@ class FeedForwardLayer(nn.Module):
         return self.dropout(F.relu(self.linear(x)))
 
 class EncoderBlock(nn.Module):
-    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, mask=None):
+    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout):
         super(EncoderBlock, self).__init__()
         self.input_conv = nn.Conv1d(d_word, d_conv, 1)
         depthwise_conv = DepthwiseSeparableConvLayer(d_conv, 7, d_conv, dropout)
         self.depthwise_conv_layers = ResNormLayer(d_conv, depthwise_conv, dropout, n_conv, dim=-2)
-        multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention, mask, dropout)
+        multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention, dropout)
         self.multihead_attention_layer = ResNormLayer(d_conv, multihead_attention, dropout)
         feed_forward_layer = FeedForwardLayer(d_attention * n_head, d_out, dropout)
         self.feed_forward_layer = ResNormLayer(d_conv, feed_forward_layer, dropout)
 
-    def forward(self, x):
+    def forward(self, x, mask):
         x = x.transpose(-1, -2)
         x = self.input_conv(x)
         x = self.depthwise_conv_layers(x)
         x = x.transpose(-1, -2)
-        x = self.multihead_attention_layer(x, y=x)
+        x = self.multihead_attention_layer(x, y=x, mask=mask)
         x = self.feed_forward_layer(x)
         return x
 
 class EncoderLayer(nn.Module):
-    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head,   dropout, n_block=1, mask=None):
+    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head,   dropout, n_block=1):
         super(EncoderLayer, self).__init__()
         blocks = []
         for i in range(n_block):
             if i == 0:
-                encoder_block = EncoderBlock(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, mask)
+                encoder_block = EncoderBlock(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout)
             else:
-                encoder_block = EncoderBlock(d_conv, d_conv, d_attention, d_out, n_conv, n_head, dropout, mask)
+                encoder_block = EncoderBlock(d_conv, d_conv, d_attention, d_out, n_conv, n_head, dropout)
             blocks.append(encoder_block)
         self.encoder_blocks = nn.ModuleList(blocks)
     
-    def forward(self, x):
+    def forward(self, x, mask):
         for encoder_block in self.encoder_blocks:
-            x = encoder_block(x)
+            x = encoder_block(x, mask)
         return x
 
 class ContextQueryAttentionLayer(nn.Module):
@@ -280,14 +280,14 @@ class ContextQueryAttentionLayer(nn.Module):
         return s
 
 class ModelEncoderLayer(nn.Module):
-    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block, mask=None):
+    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block):
         super(ModelEncoderLayer, self).__init__()
-        self.encoder_layer = EncoderLayer(d_word,d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block, mask)
+        self.encoder_layer = EncoderLayer(d_word,d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
 
-    def forward(self, x):
-        m0 = self.encoder_layer(x)
-        m1 = self.encoder_layer(m0)
-        m2 = self.encoder_layer(m1)
+    def forward(self, x, mask):
+        m0 = self.encoder_layer(x, mask) # (batch_size, n_context, dout)
+        m1 = self.encoder_layer(m0, mask) # (batch_size, n_context, dout)
+        m2 = self.encoder_layer(m1, mask) # (batch_size, n_context, dout)
         return m0, m1, m2
 
 class OutputLayer(nn.Module):

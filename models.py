@@ -7,6 +7,7 @@ Author:
 import layers
 import torch
 import torch.nn as nn
+import qa_net_layers
 
 
 class BiDAF(nn.Module):
@@ -68,5 +69,58 @@ class BiDAF(nn.Module):
         mod = self.mod(att, c_len)        # (batch_size, c_len, 2 * hidden_size)
 
         out = self.out(att, mod, c_mask)  # 2 tensors, each (batch_size, c_len)
+
+        return out
+
+class QANet(nn.Module):
+    def __init__(self, word_vectors, char2idx):
+        super(QANet, self).__init__()
+        # input embedding layer
+        d_char = 200
+        word_dropout = 0.1
+        char_dropout = 0.05
+        hidden_size = 500
+        highway_dropout = 0.1
+        self.emb = qa_net_layers.InputEmbedding(word_vectors, d_char, char2idx, hidden_size, word_dropout, char_dropout, highway_dropout)
+        # embedding encoder layer
+        d_word = 500
+        d_conv = 128
+        d_attention = 16
+        d_out = 128
+        n_conv = 4
+        n_head = 8
+        mask = None
+        dropout = 0.1
+        self.emb_encoder = qa_net_layers.EncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout)
+        # context query attention layer
+        self.att = qa_net_layers.ContextQueryAttentionLayer(d_out)        
+        # model encoder layer
+        d_word = 128 * 4
+        d_conv = 128 * 4
+        d_attention = 64
+        d_out = 128 * 4
+        n_conv = 2
+        n_head = 8
+        dropout = 0.1
+        n_block = 7
+        self.model_encoder = qa_net_layers.ModelEncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
+        # output layer
+        output_layer = qa_net_layers.OutputLayer(128 * 4)
+
+    def forward(self, cw_idxs, cc_idxs, qw_idxs, qc_idxs):
+        c_mask = torch.zeros_like(cw_idxs) != cw_idxs
+        q_mask = torch.zeros_like(qw_idxs) != qw_idxs
+
+        c_emb = self.emb(cw_idxs, cc_idxs)
+        q_emb = self.emb(qw_idxs, qc_idxs)
+
+        c_enc = self.emb_encoder(c_emb, c_mask)
+        q_enc = self.emb_encoder(q_emb, q_mask)
+
+        att = self.att(c_enc, q_enc, c_mask, q_mask)
+
+        m0, m1, m2 = self.model_encoder(att, c_mask) 
+
+        out = self.output_layer(m0, m1, m2, c_mask)
 
         return out
