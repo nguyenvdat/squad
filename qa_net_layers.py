@@ -86,6 +86,7 @@ class InputEmbedding(nn.Module):
     def __init__(self, word_vectors, d_char, char2idx, hidden_size, word_dropout, char_dropout, highway_dropout):
         super(InputEmbedding, self).__init__()
         self.word_embed = nn.Embedding.from_pretrained(word_vectors)
+        self.word_embed.weight.requires_grad = False
         self.char_embed = CharEmbeddings(d_char, char2idx, char_dropout)
         self.hwy = HighwayEncoder(2, hidden_size, highway_dropout)
         self.word_dropout = nn.Dropout(word_dropout)
@@ -164,8 +165,11 @@ class AttentionLayer(nn.Module):
         key = self.key_linear(y) # (batch_size, len_sentence_y, d_attention)
         value = self.value_linear(y) # (batch_size, len_sentence_y, d_attention)
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_attention)
-        mask = torch.unsqueeze(mask, 1)
-        scores = masked_softmax(scores, mask, -1) # (batch_size, len_sentence_x, len_sentence_y)
+        if mask is not None:
+            mask = torch.unsqueeze(mask, 1)
+            scores = masked_softmax(scores, mask, -1) # (batch_size, len_sentence_x, len_sentence_y)
+        else:
+            scores = F.softmax(scores, -1)
         return torch.matmul(scores, value) # (batch_size, len_sentence_x,  d_attention)
 
 def clones(module, N):
@@ -194,6 +198,7 @@ class FeedForwardLayer(nn.Module):
 class EncoderBlock(nn.Module):
     def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout):
         super(EncoderBlock, self).__init__()
+        self.pos_enc = PositionalEncoder(d_word)
         self.input_conv = nn.Conv1d(d_word, d_conv, 1)
         depthwise_conv = DepthwiseSeparableConvLayer(d_conv, 7, d_conv, dropout)
         self.depthwise_conv_layers = ResNormLayer(d_conv, depthwise_conv, dropout, n_conv, dim=-2)
@@ -203,6 +208,7 @@ class EncoderBlock(nn.Module):
         self.feed_forward_layer = ResNormLayer(d_conv, feed_forward_layer, dropout)
 
     def forward(self, x, mask):
+        x = self.pos_enc(x)
         x = x.transpose(-1, -2)
         x = self.input_conv(x)
         x = self.depthwise_conv_layers(x)
@@ -224,8 +230,11 @@ class EncoderLayer(nn.Module):
         self.encoder_blocks = nn.ModuleList(blocks)
     
     def forward(self, x, mask):
-        for encoder_block in self.encoder_blocks:
-            x = encoder_block(x, mask)
+        for i, encoder_block in enumerate(self.encoder_blocks):
+            if i == 0:
+                x = encoder_block(x, mask)
+            else: 
+                x = encoder_block(x, mask=None)
         return x
 
 class ContextQueryAttentionLayer(nn.Module):
@@ -282,12 +291,17 @@ class ContextQueryAttentionLayer(nn.Module):
 class ModelEncoderLayer(nn.Module):
     def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block):
         super(ModelEncoderLayer, self).__init__()
-        self.encoder_layer = EncoderLayer(d_word,d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
+        self.input_conv = nn.Conv1d(d_word, d_conv, 1)
+        self.encoder_layer = EncoderLayer(d_conv, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
 
     def forward(self, x, mask):
+        x = x.transpose(-1, -2)
+        x = self.input_conv(x)
+        x = x.transpose(-1, -2)
         m0 = self.encoder_layer(x, mask) # (batch_size, n_context, dout)
         m1 = self.encoder_layer(m0, mask) # (batch_size, n_context, dout)
         m2 = self.encoder_layer(m1, mask) # (batch_size, n_context, dout)
+        # return m0, m1, m2
         return m0, m1, m2
 
 class OutputLayer(nn.Module):
@@ -298,9 +312,33 @@ class OutputLayer(nn.Module):
     
     def forward(self, m0, m1, m2, mask):
         logits_1 = self.linear1(torch.cat((m0, m1), 2)) # (batch_size, n_context, 1)
-        print(logits_1.size())
         logits_2 = self.linear2(torch.cat((m0, m2), 2)) # (batch_size, n_context, 1)
-        print(logits_2.size())
         log_p1 = masked_softmax(logits_1.squeeze(), mask, log_softmax=True)
         log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
         return log_p1, log_p2
+
+class PositionalEncoder(nn.Module):
+    def __init__(self, d_model, max_seq_len = 400):
+        super().__init__()
+        self.d_model = d_model
+        
+        # create constant 'pe' matrix with values dependant on 
+        # pos and i
+        pe = torch.zeros(max_seq_len, d_model)
+        for pos in range(max_seq_len):
+            for i in range(0, d_model, 2):
+                pe[pos, i] = \
+                math.sin(pos / (10000 ** ((2 * i)/d_model)))
+                pe[pos, i + 1] = \
+                math.cos(pos / (10000 ** ((2 * (i + 1))/d_model)))
+                
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+    
+    def forward(self, x):
+        # make embeddings relatively larger
+        x = x * math.sqrt(self.d_model)
+        #add constant to embedding
+        seq_len = x.size(1)
+        x = x + self.pe[:,:seq_len]
+        return x

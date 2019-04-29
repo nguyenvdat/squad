@@ -1,0 +1,11 @@
+Depthwise separable convolution 1d in pytorch
+- Apply 2 conv1d layers on top of each other
+- The first one perform depthwise by setting group = inChannel and outChannel = inChannel (having each filter for each char
+  embedding dimension while preserve the input channel.
+- The second one perform pointwise convolution by setting kernel size = 1 and outChannel = e_word
+- idx 1 is OOV (out of vocabulary), 0 is PAD
+Seo's paper: https://arxiv.org/pdf/1611.01603.pdf
+
+Shape of a batch
+- Word: [64, 374] # second dimension can vary
+- Char: [64, 374, 16]

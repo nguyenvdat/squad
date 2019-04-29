@@ -77,13 +77,16 @@ class QANet(nn.Module):
         super(QANet, self).__init__()
         # input embedding layer
         d_char = 200
+        # d_char = 20
         word_dropout = 0.1
         char_dropout = 0.05
         hidden_size = 500
+        # hidden_size = 320
         highway_dropout = 0.1
         self.emb = qa_net_layers.InputEmbedding(word_vectors, d_char, char2idx, hidden_size, word_dropout, char_dropout, highway_dropout)
         # embedding encoder layer
         d_word = 500
+        # d_word = 320
         d_conv = 128
         d_attention = 16
         d_out = 128
@@ -96,31 +99,40 @@ class QANet(nn.Module):
         self.att = qa_net_layers.ContextQueryAttentionLayer(d_out)        
         # model encoder layer
         d_word = 128 * 4
-        d_conv = 128 * 4
-        d_attention = 64
-        d_out = 128 * 4
+        d_conv = 128
+        d_attention = 16
+        d_out = 128
         n_conv = 2
         n_head = 8
         dropout = 0.1
-        n_block = 7
+        n_block = 2
         self.model_encoder = qa_net_layers.ModelEncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
         # output layer
-        output_layer = qa_net_layers.OutputLayer(128 * 4)
+        self.output_layer = qa_net_layers.OutputLayer(128)
 
     def forward(self, cw_idxs, cc_idxs, qw_idxs, qc_idxs):
         c_mask = torch.zeros_like(cw_idxs) != cw_idxs
         q_mask = torch.zeros_like(qw_idxs) != qw_idxs
 
-        c_emb = self.emb(cw_idxs, cc_idxs)
-        q_emb = self.emb(qw_idxs, qc_idxs)
+        c_emb = self.emb(cw_idxs, cc_idxs) # (bs, context_len, hidden_size)
+        # print('c_emb: {}'.format(c_emb.size()))
+        q_emb = self.emb(qw_idxs, qc_idxs) # (bs, question_len, hidden_size)
+        # print('q_emb: {}'.format(q_emb.size()))
 
-        c_enc = self.emb_encoder(c_emb, c_mask)
-        q_enc = self.emb_encoder(q_emb, q_mask)
+        c_enc = self.emb_encoder(c_emb, c_mask) # (bs, context_len, dout)
+        # print('c_enc: {}'.format(c_enc.size()))
+        q_enc = self.emb_encoder(q_emb, q_mask) # (bs, context_len, dout)
+        # print('q_enc: {}'.format(q_enc.size()))
 
-        att = self.att(c_enc, q_enc, c_mask, q_mask)
+        att = self.att(c_enc, q_enc, c_mask, q_mask) # (bs, context_len, 4*dout)
+        # print('att: {}'.format(att.size()))
 
-        m0, m1, m2 = self.model_encoder(att, c_mask) 
+        # print('model encoder layer')
+        m0, m1, m2 = self.model_encoder(att, mask=c_mask)  # (bs, context_len, dout)
+        # print('m0: {}'.format(m0.size()))
+        # print('m1: {}'.format(m1.size()))
+        # print('m2: {}'.format(m2.size()))
 
-        out = self.output_layer(m0, m1, m2, c_mask)
+        out = self.output_layer(m0, m1, m2, c_mask) # (bs, context_len, 1)
 
         return out

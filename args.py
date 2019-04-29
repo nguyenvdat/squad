@@ -96,6 +96,7 @@ def get_train_args():
     parser.add_argument('--eval_steps',
                         type=int,
                         default=50000,
+                        # default=500,
                         help='Number of steps between successive evaluations.')
     parser.add_argument('--lr',
                         type=float,
@@ -134,6 +135,9 @@ def get_train_args():
                         type=float,
                         default=0.999,
                         help='Decay rate for exponential moving average of parameters.')
+    parser.add_argument('--char2idx_file',
+                        type=str,
+                        default='./data/char2idx.json')
 
     args = parser.parse_args()
 
