@@ -184,6 +184,10 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
             # Get F1 and EM scores
             p1, p2 = log_p1.exp(), log_p2.exp()
             starts, ends = util.discretize(p1, p2, max_len, use_squad_v2)
+            print('Starts: {}'.format(starts))
+            print('Ends : {}'.format(ends))
+            print('y1: {}'.format(y1))
+            print('y2: {}'.format(y2))
 
             # Log info
             progress_bar.update(batch_size)

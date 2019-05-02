@@ -63,6 +63,9 @@ class HighwayEncoder(nn.Module):
         self.gates = nn.ModuleList([nn.Linear(hidden_size, hidden_size)
                                     for _ in range(num_layers)])
         self.dropout = nn.Dropout(dropout)
+        for transform, gate in zip(self.transforms, self.gates):
+            nn.init.kaiming_normal_(transform.weight)
+            nn.init.kaiming_normal_(gate.weight)
 
     def forward(self, x):
         for gate, transform in zip(self.gates, self.transforms):
@@ -110,6 +113,8 @@ class NormLayer(nn.Module):
         self.b = nn.Parameter(torch.zeros(input_size))
         self.eps = eps  
         self.dim = dim
+        nn.init.xavier_uniform_(self.g)
+        nn.init.xavier_uniform_(self.b)
     
     def forward(self, x):
         mean = torch.mean(x, self.dim, keepdim=True)
@@ -119,10 +124,8 @@ class NormLayer(nn.Module):
 class ResNormLayer(nn.Module):
     """ for an input x add x to the output of applying consecutively n times f_layer to normalized x
     """
-    def __init__(self, input_size, f_layer, dropout, n=None, dim=-1):
+    def __init__(self, input_size, f_layer, dropout, n=1, dim=-1):
         super(ResNormLayer, self).__init__()
-        if n is None:
-            n = 1
         self.f_layers = clones(f_layer, n)
         self.norm_layer = NormLayer(input_size, dim=dim)
         self.dropout = nn.Dropout(dropout)
@@ -159,6 +162,9 @@ class AttentionLayer(nn.Module):
         self.key_linear = nn.Linear(d_conv, d_attention)
         self.value_linear = nn.Linear(d_conv, d_attention)
         self.dropout = nn.Dropout(dropout)
+        nn.init.xavier_uniform_(self.query_linear.weight)
+        nn.init.xavier_uniform_(self.key_linear.weight)
+        nn.init.xavier_uniform_(self.value_linear.weight)
 
     def forward(self, x, y, mask):
         query = self.query_linear(x) # (batch_size, len_sentence_x, d_attention)
@@ -167,6 +173,7 @@ class AttentionLayer(nn.Module):
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_attention)
         if mask is not None:
             mask = torch.unsqueeze(mask, 1)
+            # print('mask: {}'.format(mask.size()))
             scores = masked_softmax(scores, mask, -1) # (batch_size, len_sentence_x, len_sentence_y)
         else:
             scores = F.softmax(scores, -1)
@@ -199,9 +206,14 @@ class EncoderBlock(nn.Module):
     def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout):
         super(EncoderBlock, self).__init__()
         self.pos_enc = PositionalEncoder(d_word)
-        self.input_conv = nn.Conv1d(d_word, d_conv, 1)
+        if d_word != d_conv:
+            self.input_conv = nn.Conv1d(d_word, d_conv, 1)
+            nn.init.xavier_uniform_(self.input_conv.weight)
+            self.input_same_shape = False
+        else:
+            self.input_same_shape = True
         depthwise_conv = DepthwiseSeparableConvLayer(d_conv, 7, d_conv, dropout)
-        self.depthwise_conv_layers = ResNormLayer(d_conv, depthwise_conv, dropout, n_conv, dim=-2)
+        self.depthwise_conv_layers = clones(ResNormLayer(d_conv, depthwise_conv, dropout, dim=-2), n_conv)
         multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention, dropout)
         self.multihead_attention_layer = ResNormLayer(d_conv, multihead_attention, dropout)
         feed_forward_layer = FeedForwardLayer(d_attention * n_head, d_out, dropout)
@@ -210,8 +222,10 @@ class EncoderBlock(nn.Module):
     def forward(self, x, mask):
         x = self.pos_enc(x)
         x = x.transpose(-1, -2)
-        x = self.input_conv(x)
-        x = self.depthwise_conv_layers(x)
+        if not self.input_same_shape:
+            x = self.input_conv(x)
+        for l in self.depthwise_conv_layers:
+            x = l(x)
         x = x.transpose(-1, -2)
         x = self.multihead_attention_layer(x, y=x, mask=mask)
         x = self.feed_forward_layer(x)
@@ -234,7 +248,8 @@ class EncoderLayer(nn.Module):
             if i == 0:
                 x = encoder_block(x, mask)
             else: 
-                x = encoder_block(x, mask=None)
+                # x = encoder_block(x, mask=None)
+                x = encoder_block(x, mask)
         return x
 
 class ContextQueryAttentionLayer(nn.Module):
@@ -293,6 +308,7 @@ class ModelEncoderLayer(nn.Module):
         super(ModelEncoderLayer, self).__init__()
         self.input_conv = nn.Conv1d(d_word, d_conv, 1)
         self.encoder_layer = EncoderLayer(d_conv, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
+        nn.init.xavier_uniform_(self.input_conv.weight)
 
     def forward(self, x, mask):
         x = x.transpose(-1, -2)
@@ -309,6 +325,8 @@ class OutputLayer(nn.Module):
         super(OutputLayer, self).__init__()
         self.linear1 = nn.Linear(input_size * 2, 1)
         self.linear2 = nn.Linear(input_size * 2, 1)
+        nn.init.xavier_uniform_(self.linear1.weight)
+        nn.init.xavier_uniform_(self.linear2.weight)
     
     def forward(self, m0, m1, m2, mask):
         logits_1 = self.linear1(torch.cat((m0, m1), 2)) # (batch_size, n_context, 1)
@@ -337,8 +355,9 @@ class PositionalEncoder(nn.Module):
     
     def forward(self, x):
         # make embeddings relatively larger
-        x = x * math.sqrt(self.d_model)
+        # x = x * math.sqrt(self.d_model)
         #add constant to embedding
         seq_len = x.size(1)
         x = x + self.pe[:,:seq_len]
+        # print('pe: {}'.format(self.pe[:, :seq_len].size()))
         return x

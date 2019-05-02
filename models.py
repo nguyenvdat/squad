@@ -78,11 +78,14 @@ class QANet(nn.Module):
         # input embedding layer
         d_char = 200
         # d_char = 20
-        word_dropout = 0.1
-        char_dropout = 0.05
+        # word_dropout = 0.1
+        word_dropout = 0
+        # char_dropout = 0.05
+        char_dropout = 0
         hidden_size = 500
         # hidden_size = 320
-        highway_dropout = 0.1
+        # highway_dropout = 0.1
+        highway_dropout = 0
         self.emb = qa_net_layers.InputEmbedding(word_vectors, d_char, char2idx, hidden_size, word_dropout, char_dropout, highway_dropout)
         # embedding encoder layer
         d_word = 500
@@ -92,8 +95,8 @@ class QANet(nn.Module):
         d_out = 128
         n_conv = 4
         n_head = 8
-        mask = None
-        dropout = 0.1
+        # dropout = 0.1
+        dropout = 0
         self.emb_encoder = qa_net_layers.EncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout)
         # context query attention layer
         self.att = qa_net_layers.ContextQueryAttentionLayer(d_out)        
@@ -104,7 +107,8 @@ class QANet(nn.Module):
         d_out = 128
         n_conv = 2
         n_head = 8
-        dropout = 0.1
+        # dropout = 0.1
+        dropout = 0
         n_block = 2
         self.model_encoder = qa_net_layers.ModelEncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
         # output layer
@@ -112,6 +116,7 @@ class QANet(nn.Module):
 
     def forward(self, cw_idxs, cc_idxs, qw_idxs, qc_idxs):
         c_mask = torch.zeros_like(cw_idxs) != cw_idxs
+        print(c_mask.size())
         q_mask = torch.zeros_like(qw_idxs) != qw_idxs
 
         c_emb = self.emb(cw_idxs, cc_idxs) # (bs, context_len, hidden_size)
@@ -133,6 +138,6 @@ class QANet(nn.Module):
         # print('m1: {}'.format(m1.size()))
         # print('m2: {}'.format(m2.size()))
 
-        out = self.output_layer(m0, m1, m2, c_mask) # (bs, context_len, 1)
+        log_p1, log_p2 = self.output_layer(m0, m1, m2, c_mask) # (bs, context_len, 1)
 
-        return out
+        return log_p1, log_p2

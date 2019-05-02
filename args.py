@@ -108,7 +108,7 @@ def get_train_args():
                         help='L2 weight decay.')
     parser.add_argument('--num_epochs',
                         type=int,
-                        default=30,
+                        default=200,
                         help='Number of epochs for which to train. Negative means forever.')
     parser.add_argument('--drop_prob',
                         type=float,

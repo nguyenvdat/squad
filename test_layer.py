@@ -27,7 +27,12 @@ def main():
     # test_context_query_attention()
     # test_model_encoder()
     # test_output_layer()
-    test_model()
+    # test_model()
+    args = get_setup_args()
+    eval_file = args.dev_eval_file
+    with open(eval_file, 'r') as fh:
+        gold_dict = json_load(fh)
+        print(gold_dict.keys())
     
 def test_input_embedding():
     args = get_setup_args()
