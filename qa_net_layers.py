@@ -124,11 +124,10 @@ class NormLayer(nn.Module):
 class ResNormLayer(nn.Module):
     """ for an input x add x to the output of applying consecutively n times f_layer to normalized x
     """
-    def __init__(self, input_size, f_layer, dropout, n=1, dim=-1):
+    def __init__(self, input_size, f_layer, n=1, dim=-1):
         super(ResNormLayer, self).__init__()
         self.f_layers = clones(f_layer, n)
         self.norm_layer = NormLayer(input_size, dim=dim)
-        self.dropout = nn.Dropout(dropout)
     
     def forward(self, x, **kwargs):
         old_x = x
@@ -138,30 +137,27 @@ class ResNormLayer(nn.Module):
                 x = l(x, kwargs['y'], kwargs['mask'])
             else:
                 x = l(x)
-        return self.dropout(x + old_x)
+        return x + old_x
 
 class DepthwiseSeparableConvLayer(nn.Module):
-    def __init__(self, d_word, k, d_conv, dropout):
+    def __init__(self, d_word, k, d_conv):
         super(DepthwiseSeparableConvLayer, self).__init__()
         self.depthwise_conv = nn.Conv1d(d_word, d_word, k, groups=d_word, padding=k//2,bias=False)  
         self.pointwise_conv = nn.Conv1d(d_word, d_conv, 1, bias=True)
-        self.dropout = nn.Dropout(dropout)
         nn.init.kaiming_normal_(self.depthwise_conv.weight)
         nn.init.kaiming_normal_(self.pointwise_conv.weight)
     
     def forward(self, x):
-        return self.dropout(F.relu(self.pointwise_conv(self.depthwise_conv(x))))
+        return F.relu(self.pointwise_conv(self.depthwise_conv(x)))
 
 class AttentionLayer(nn.Module):
-    def __init__(self, d_conv, d_attention, dropout=None):
+    def __init__(self, d_conv, d_attention):
         super(AttentionLayer, self).__init__()
         assert d_conv % d_attention == 0
         self.d_attention = d_attention
-        self.dropout = dropout
         self.query_linear = nn.Linear(d_conv, d_attention)
         self.key_linear = nn.Linear(d_conv, d_attention)
         self.value_linear = nn.Linear(d_conv, d_attention)
-        self.dropout = nn.Dropout(dropout)
         nn.init.xavier_uniform_(self.query_linear.weight)
         nn.init.xavier_uniform_(self.key_linear.weight)
         nn.init.xavier_uniform_(self.value_linear.weight)
@@ -183,9 +179,9 @@ def clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 class MultiHeadAttentionLayer(nn.Module):
-    def __init__(self, n_head, d_conv, d_attention, dropout=None):
+    def __init__(self, n_head, d_conv, d_attention):
         super(MultiHeadAttentionLayer, self).__init__()
-        attention_layer = AttentionLayer(d_conv, d_attention, dropout)
+        attention_layer = AttentionLayer(d_conv, d_attention)
         self.attention_layers = clones(attention_layer, n_head)
 
     def forward(self, x, y, mask):
@@ -193,17 +189,16 @@ class MultiHeadAttentionLayer(nn.Module):
         return torch.cat(attention_heads, 2) # (batch_size, len_sentence_x, d_attention * n_head)
 
 class FeedForwardLayer(nn.Module):
-    def __init__(self, d_in, d_out, dropout):
+    def __init__(self, d_in, d_out):
         super(FeedForwardLayer, self).__init__()
         self.linear = nn.Linear(d_in, d_out)
         nn.init.kaiming_normal_(self.linear.weight)
-        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        return self.dropout(F.relu(self.linear(x)))
+        return F.relu(self.linear(x))
 
 class EncoderBlock(nn.Module):
-    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout):
+    def __init__(self, d_word, d_conv, kernel_size, d_attention, d_out, n_conv, n_head):
         super(EncoderBlock, self).__init__()
         self.pos_enc = PositionalEncoder(d_word)
         if d_word != d_conv:
@@ -212,12 +207,12 @@ class EncoderBlock(nn.Module):
             self.input_same_shape = False
         else:
             self.input_same_shape = True
-        depthwise_conv = DepthwiseSeparableConvLayer(d_conv, 7, d_conv, dropout)
-        self.depthwise_conv_layers = clones(ResNormLayer(d_conv, depthwise_conv, dropout, dim=-2), n_conv)
-        multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention, dropout)
-        self.multihead_attention_layer = ResNormLayer(d_conv, multihead_attention, dropout)
-        feed_forward_layer = FeedForwardLayer(d_attention * n_head, d_out, dropout)
-        self.feed_forward_layer = ResNormLayer(d_conv, feed_forward_layer, dropout)
+        depthwise_conv = DepthwiseSeparableConvLayer(d_conv, kernel_size, d_conv)
+        self.depthwise_conv_layers = clones(ResNormLayer(d_conv, depthwise_conv, dim=-2), n_conv)
+        multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention)
+        self.multihead_attention_layer = ResNormLayer(d_conv, multihead_attention)
+        feed_forward_layer = FeedForwardLayer(d_attention * n_head, d_out)
+        self.feed_forward_layer = ResNormLayer(d_conv, feed_forward_layer)
 
     def forward(self, x, mask):
         x = self.pos_enc(x)
@@ -232,16 +227,17 @@ class EncoderBlock(nn.Module):
         return x
 
 class EncoderLayer(nn.Module):
-    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head,   dropout, n_block=1):
+    def __init__(self, d_word, d_conv, kernel_size, d_attention, d_out, n_conv, n_head,   dropout, n_block=1):
         super(EncoderLayer, self).__init__()
         blocks = []
         for i in range(n_block):
             if i == 0:
-                encoder_block = EncoderBlock(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout)
+                encoder_block = EncoderBlock(d_word, d_conv, kernel_size,  d_attention, d_out, n_conv, n_head)
             else:
-                encoder_block = EncoderBlock(d_conv, d_conv, d_attention, d_out, n_conv, n_head, dropout)
+                encoder_block = EncoderBlock(d_conv, d_conv, kernel_size,  d_attention, d_out, n_conv, n_head)
             blocks.append(encoder_block)
         self.encoder_blocks = nn.ModuleList(blocks)
+        self.dropout = nn.Dropout(dropout)
     
     def forward(self, x, mask):
         for i, encoder_block in enumerate(self.encoder_blocks):
@@ -250,7 +246,7 @@ class EncoderLayer(nn.Module):
             else: 
                 # x = encoder_block(x, mask=None)
                 x = encoder_block(x, mask)
-        return x
+        return self.dropout(x)
 
 class ContextQueryAttentionLayer(nn.Module):
     """Context Query Attention Layer (mainly Stanford cs224 course's code)
@@ -259,9 +255,9 @@ class ContextQueryAttentionLayer(nn.Module):
         hidden_size (int): Size of hidden activations.
         drop_prob (float): Probability of zero-ing out activations.
     """
-    def __init__(self, input_size, drop_prob=0.1):
+    def __init__(self, input_size, dropout):
         super(ContextQueryAttentionLayer, self).__init__()
-        self.dropout = nn.Dropout(drop_prob)
+        self.dropout = nn.Dropout(dropout)
         self.c_weight = nn.Parameter(torch.zeros(input_size, 1))
         self.q_weight = nn.Parameter(torch.zeros(input_size, 1))
         self.cq_weight = nn.Parameter(torch.zeros(1, 1, input_size))
@@ -285,14 +281,14 @@ class ContextQueryAttentionLayer(nn.Module):
 
         x = torch.cat([c, a, c * a, c * b], dim=2)  # (bs, c_len, 4 * input_size)
 
-        return x
+        return self.dropout(x)
 
     def get_similarity_matrix(self, c, q):
         """Get the "similarity matrix" between context and query.
         """
         c_len, q_len = c.size(1), q.size(1)
-        c = self.dropout(c)  # (bs, c_len,input_size)
-        q = self.dropout(q)  # (bs, q_len, input_size)
+        # c = self.dropout(c)  # (bs, c_len,input_size)
+        # q = self.dropout(q)  # (bs, q_len, input_size)
 
         # Shapes: (batch_size, c_len, q_len)
         s0 = torch.matmul(c, self.c_weight).expand([-1, -1, q_len])
@@ -304,10 +300,10 @@ class ContextQueryAttentionLayer(nn.Module):
         return s
 
 class ModelEncoderLayer(nn.Module):
-    def __init__(self, d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block):
+    def __init__(self, d_word, d_conv, kernel_size, d_attention, d_out, n_conv, n_head, dropout, n_block):
         super(ModelEncoderLayer, self).__init__()
         self.input_conv = nn.Conv1d(d_word, d_conv, 1)
-        self.encoder_layer = EncoderLayer(d_conv, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
+        self.encoder_layer = EncoderLayer(d_conv, d_conv, kernel_size, d_attention, d_out, n_conv, n_head, dropout, n_block)
         nn.init.xavier_uniform_(self.input_conv.weight)
 
     def forward(self, x, mask):
@@ -336,7 +332,7 @@ class OutputLayer(nn.Module):
         return log_p1, log_p2
 
 class PositionalEncoder(nn.Module):
-    def __init__(self, d_model, max_seq_len = 400):
+    def __init__(self, d_model, max_seq_len = 800):
         super().__init__()
         self.d_model = d_model
         

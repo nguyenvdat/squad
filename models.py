@@ -78,45 +78,48 @@ class QANet(nn.Module):
         # input embedding layer
         d_char = 200
         # d_char = 20
-        # word_dropout = 0.1
-        word_dropout = 0
-        # char_dropout = 0.05
-        char_dropout = 0
+        word_dropout = 0.1
+        # word_dropout = 0
+        char_dropout = 0.05
+        # char_dropout = 0
         hidden_size = 500
         # hidden_size = 320
-        # highway_dropout = 0.1
-        highway_dropout = 0
+        highway_dropout = 0.1
+        # highway_dropout = 0
         self.emb = qa_net_layers.InputEmbedding(word_vectors, d_char, char2idx, hidden_size, word_dropout, char_dropout, highway_dropout)
         # embedding encoder layer
         d_word = 500
         # d_word = 320
         d_conv = 128
+        kernel_size = 7
         d_attention = 16
         d_out = 128
         n_conv = 4
         n_head = 8
-        # dropout = 0.1
-        dropout = 0
-        self.emb_encoder = qa_net_layers.EncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout)
+        dropout = 0.1
+        # dropout = 0
+        self.emb_encoder = qa_net_layers.EncoderLayer(d_word, d_conv, kernel_size, d_attention, d_out, n_conv, n_head, dropout)
         # context query attention layer
-        self.att = qa_net_layers.ContextQueryAttentionLayer(d_out)        
+        dropout = 0.1
+        self.att = qa_net_layers.ContextQueryAttentionLayer(d_out, dropout)        
         # model encoder layer
         d_word = 128 * 4
         d_conv = 128
+        kernel_size = 5
         d_attention = 16
         d_out = 128
         n_conv = 2
         n_head = 8
-        # dropout = 0.1
-        dropout = 0
+        dropout = 0.1
+        # dropout = 0
         n_block = 2
-        self.model_encoder = qa_net_layers.ModelEncoderLayer(d_word, d_conv, d_attention, d_out, n_conv, n_head, dropout, n_block)
+        self.model_encoder = qa_net_layers.ModelEncoderLayer(d_word, d_conv, kernel_size, d_attention, d_out, n_conv, n_head, dropout, n_block)
         # output layer
         self.output_layer = qa_net_layers.OutputLayer(128)
 
     def forward(self, cw_idxs, cc_idxs, qw_idxs, qc_idxs):
         c_mask = torch.zeros_like(cw_idxs) != cw_idxs
-        print(c_mask.size())
+        # print(c_mask.size())
         q_mask = torch.zeros_like(qw_idxs) != qw_idxs
 
         c_emb = self.emb(cw_idxs, cc_idxs) # (bs, context_len, hidden_size)
