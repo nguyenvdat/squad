@@ -71,12 +71,25 @@ def main(args):
     # Get optimizer and scheduler
     optimizer = optim.Adadelta(model.parameters(), args.lr,
                                weight_decay=args.l2_wd)
-    # optimizer = optim.Adam(model.parameters())
+    # optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.8, 0.999))
     scheduler = sched.LambdaLR(optimizer, lambda s: 1.)  # Constant LR
 
     # Get data loader
     log.info('Building dataset...')
-    train_dataset = SQuAD(args.dev_record_file, args.use_squad_v2)
+    
+    dataset1 = np.load(args.train_record_file)
+    outfile = '/content/dataset/train_light.npz'
+    n_row = 75000
+    np.savez(outfile, context_idxs=dataset1['context_idxs'][:n_row],
+                      context_char_idxs=dataset1['context_char_idxs'][:n_row], 
+                      ques_idxs=dataset1['ques_idxs'][:n_row],
+                      ques_char_idxs=dataset1['ques_char_idxs'][:n_row],
+                      y1s=dataset1['y1s'][:n_row],
+                      y2s=dataset1['y2s'][:n_row],
+                      ids=dataset1['ids'][:n_row])
+                      
+    # train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)
+    train_dataset = SQuAD(outfile, args.use_squad_v2)
     train_loader = data.DataLoader(train_dataset,
                                    batch_size=args.batch_size,
                                    shuffle=True,
@@ -110,7 +123,8 @@ def main(args):
                 y1, y2 = y1.to(device), y2.to(device)
                 loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
                 loss_val = loss.item()
-                print('loss val: {}'.format(loss_val))
+                if step % 10000 == 0:
+                    print('loss val: {}'.format(loss_val))
 
                 # Backward
                 loss.backward()
@@ -184,14 +198,14 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
             # Get F1 and EM scores
             p1, p2 = log_p1.exp(), log_p2.exp()
             starts, ends = util.discretize(p1, p2, max_len, use_squad_v2)
-            print('Starts: {}'.format(starts))
-            print('Ends : {}'.format(ends))
-            print('y1: {}'.format(y1))
-            print('y2: {}'.format(y2))
+            # print('Starts: {}'.format(starts))
+            # print('Ends : {}'.format(ends))
+            # print('y1: {}'.format(y1))
+            # print('y2: {}'.format(y2))
 
             # Log info
-            progress_bar.update(batch_size)
-            progress_bar.set_postfix(NLL=nll_meter.avg)
+            # progress_bar.update(batch_size)
+            # progress_bar.set_postfix(NLL=nll_meter.avg)
 
             preds, _ = util.convert_tokens(gold_dict,
                                            ids.tolist(),

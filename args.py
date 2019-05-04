@@ -183,22 +183,29 @@ def add_common_args(parser):
     """Add arguments common to all 3 scripts: setup.py, train.py, test.py"""
     parser.add_argument('--train_record_file',
                         type=str,
-                        default='./data/train.npz')
+                        # default='./data/train.npz')
+                        # default='/Volumes/Blazing/data/train.npz')
+                        default='/content/dataset/train.npz')
     parser.add_argument('--dev_record_file',
                         type=str,
                         default='./data/dev.npz')
+                        # default='/Volumes/Blazing/data/dev.npz')
     parser.add_argument('--test_record_file',
                         type=str,
-                        default='./data/test.npz')
+                        # default='./data/test.npz')
+                        default='/content/dataset/test.npz')
     parser.add_argument('--word_emb_file',
                         type=str,
                         default='./data/word_emb.json')
+                        # default='/Volumes/Blazing/data/word_emb.json')
     parser.add_argument('--char_emb_file',
                         type=str,
                         default='./data/char_emb.json')
+                        # default='/Volumes/Blazing/data/char_emb.json')
     parser.add_argument('--train_eval_file',
                         type=str,
-                        default='./data/train_eval.json')
+                        # default='./data/train_eval.json')
+                        default='/content/dataset/train_eval.json')
     parser.add_argument('--dev_eval_file',
                         type=str,
                         default='./data/dev_eval.json')
