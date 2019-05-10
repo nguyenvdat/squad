@@ -166,7 +166,7 @@ class AttentionLayer(nn.Module):
         query = self.query_linear(x) # (batch_size, len_sentence_x, d_attention)
         key = self.key_linear(y) # (batch_size, len_sentence_y, d_attention)
         value = self.value_linear(y) # (batch_size, len_sentence_y, d_attention)
-        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_attention)
+        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt (self.d_attention) # (bs, len_x, len_y)
         if mask is not None:
             mask = torch.unsqueeze(mask, 1)
             # print('mask: {}'.format(mask.size()))
@@ -357,3 +357,94 @@ class PositionalEncoder(nn.Module):
         x = x + self.pe[:,:seq_len]
         # print('pe: {}'.format(self.pe[:, :seq_len].size()))
         return x
+
+class SegmentRecurrentHead(nn.Module):
+    def __init__(self, memory_len, seg_len, d_in, d_out):
+        M = memory_len
+        L = seg_len
+        self.R = self.get_relative_position_encoder(d_in, M + 2*L) # (1, M + 2*L, d_in)
+        self.R_center = M + L
+        self.Wq = nn.Linear(d_in, d_out)
+        self.Wke = nn.Linear(d_in, d_out)
+        self.Wkr = nn.Linear(d_in, d_out)
+        self.Wv = nn.Linear(d_in, d_out)
+        self.u = nn.Parameter(torch.ones(d_out, 1))
+        self.v = nn.Parameter(torch.ones(d_out, 1))
+        nn.init.xavier_uniform_(self.Wb.weights)
+        nn.init.xavier_uniform_(self.Wke.weights)
+        nn.init.xavier_uniform_(self.Wkr.weights)
+        nn.init.xavier_uniform_(self.Wv.weights)
+        nn.init.xavier_uniform_(self.u)
+        nn.init.xavier_uniform_(self.v)
+
+    def forward(self, h_prev, h, mask):
+        """
+        h_prev: (bs, M, d_in)
+        h: (bs, L, d_in)
+        """
+        bs, M, _ = h_prev.size()
+        _, L, d_out = h.size()
+        h_tile = torch.cat((h_prev.detach(), h), dim=1) # (bs, M + L, d_in)
+        q = self.Wq(h) # (bs, L, d_out)
+        k = self.Wke(h_tile) # (bs, M + L, d_out)
+        value = self.Wv(h_tile) # (bs, M + L, d_out)
+
+        # transformerxl paper p6
+        first_term = torch.bmm(q, k.transpose(1, 2)) # (bs, L, M + L)
+
+        third_term  = torch.matmul(k, self.u.repeat(1, L)) # (bs, M + L, L)
+        third_term = third_term.transpose(1, 2) # (bs, L, M + L)
+
+        # transformerxl paper p14
+        R = self.R[:, self.R_center - M - L: self.R_center + L]
+        Q = self.Wkr(R) # (bs, M + 2*L, d_out)
+        B_tile = torch.bmm(q, Q.transpose(1, 2)) # (bs, L, M + 2*L)
+        B = torch.zeros((bs, L, L + M)) # (bs, L, M + L)
+        for i in range(L):
+            B[i] = B_tile[:, :, L - i - 1: M + 2 * L - i - 1]
+        
+        D_tile = torch.matmul(Q, self.v.repeat(1, L)) # (bs, M + 2*L, L)
+        D_tile = D_tile.transpose(1, 2) # (bs, L, M + 2*L)
+        D = torch.zeros((bs, L, L + M)) # (bs, L, M + L)
+        for i in range(L):
+            D[i] = D_tile[:, :, L - i - 1: M + 2 * L - i - 1]
+        
+        scores = (first_term + B + third_term + D) / math.sqrt(d_out)
+        mask = torch.unsqueeze(mask, 1) # (bs, 1, L)
+        scores = masked_softmax(scores, mask, -1) # (bs, L, M + L)
+        return torch.matmul(scores, value) # (bs, L, d_out)
+
+    def get_relative_position_encoder(self, d, max_length):
+        pe = torch.zeros(max_length, d)
+        for pos in range(max_length):
+            for i in range(0, d, 2):
+                pe[pos, i] = math.sin(pos / (10000 ** ((2 * i)/d)))
+                pe[pos, i + 1] = math.cos(pos / (10000 ** ((2 * (i + 1))/d)))
+        pe = pe.unsqueeze(0) # (1, max_length, d)
+        return pe
+
+class MultiHeadSegmentRecurrent(nn.Module):
+    def __init__(self, memory_len, seg_len, d_in, d_out, n_head):
+        super(MultiHeadSegmentRecurent, self).__init__()
+        segment_recurrent_head = SegmentRecurrentHead(memory_len, seg_len, d_in, d_out)
+        self.heads = clones(segment_recurrent_head, n_head)
+
+    def forward(self, h_prev, h, mask):
+        sr_heads = [head(x, y, mask) for head in self.heads]
+        return torch.cat(sr_heads, 2) # (bs, L, d_out * n_head)
+
+class SegmentRecurrent(nn.Module):
+    def __init__(self, memory_len, seg_len, d_in, d_out, n_head):
+        super(SegmentRecurrent, self).__init__()
+        self.seg_len = seg_len
+        self.multi_heads = MultiHeadSegmentRecurrent(memory_len, seg_len, d_in, d_out, n_head)
+
+    def forward(self, x, mask):
+        _, s_len, _ = x.size()
+        start_idx = 0
+        out = torch.zeros_like(x)
+        while start_idx + self.seg_len < s_len:
+            h = self.multi_heads(h_prev, x[:, start_idx: start_idx + self.seg_len], mask[:, start_idx: start_idx + self.seg_len])
+            out[:, start_idx: start_idx + self.seg_len] = h
+            h_prev = h
+            start_idx += self.seg_len
