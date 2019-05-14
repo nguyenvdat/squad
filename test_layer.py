@@ -11,7 +11,7 @@ import util
 from args import get_train_args, get_setup_args
 from collections import OrderedDict
 from json import dumps
-from models import BiDAF, QANet
+from models import BiDAF, QANet, TransformerXL
 # from tensorboardX import SummaryWriter
 # from tqdm import tqdm
 from ujson import load as json_load
@@ -27,7 +27,21 @@ def main():
     # test_context_query_attention()
     # test_model_encoder()
     # test_output_layer()
-    test_model()
+    # test_model()
+    # args = get_train_args()
+    # outfile = '/Volumes/Blazing/data/train_light.npz'
+    # infile = '/Volumes/Blazing/data/train.npz'
+    # outfile = '/Volumes/Blazing/data/train_light.npz'
+    # dataset = np.load(infile)
+    # np.savez(outfile, context_idxs=dataset['context_idxs'][:70000],
+    #                   context_char_idxs=dataset['context_char_idxs'][:70000], 
+    #                   ques_idxs=dataset['ques_idxs'][:70000],
+    #                   ques_char_idxs=dataset['ques_char_idxs'][:70000],
+    #                   y1s=dataset['y1s'][:70000],
+    #                   y2s=dataset['y2s'][:70000],
+    #                   ids=dataset['ids'][:70000])
+    # test_segment_recurrent()
+    test_transformer_xl_model()
     
 def test_input_embedding():
     args = get_setup_args()
@@ -127,7 +141,7 @@ def test_output_layer():
     print(log_p1)
     print(log_p2)
 
-def test_model():
+def test_qa_net_model():
     args = get_setup_args()
     word_vectors = util.torch_from_json(args.word_emb_file)
     with open(args.char2idx_file, "r") as f:
@@ -143,6 +157,38 @@ def test_model():
     qw_idxs[3, -1] = 0
     out = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
     print(out)
+
+def test_segment_recurrent():
+    memory_len = 64
+    seg_len = 32
+    d_in = 128
+    d_out = 16
+    n_head = 8
+    sr = SegmentRecurrent(memory_len, seg_len, d_in, d_out, n_head)
+    x = torch.rand(64, 300, 128)
+    mask = torch.ones(64, 300)
+    mask[1:20, 200:] = 0
+    mask[80:100, 250:] = 0
+    out = sr(x, mask)
+    print(out.size())
+    assert out.size() == (64, 300, 128)
+
+def test_transformer_xl_model():
+    args = get_setup_args()
+    word_vectors = util.torch_from_json(args.word_emb_file)
+    with open(args.char2idx_file, "r") as f:
+        char2idx = json_load(f)
+    model = TransformerXL(word_vectors, char2idx)
+    cw_idxs = torch.randint(2, 1000, (64, 374))
+    cc_idxs = torch.randint(2, 50, (64, 374, 200))
+    qw_idxs = torch.randint(2, 1000, (64, 70))
+    qc_idxs = torch.randint(2, 50, (64, 70, 200))
+    cw_idxs[:, 0] = 1
+    cw_idxs[3, -1] = 0
+    qw_idxs[:, 0] = 1
+    qw_idxs[3, -1] = 0
+    out = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
+    print(out.size())
 
 if __name__ == '__main__':
     main()

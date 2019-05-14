@@ -144,3 +144,81 @@ class QANet(nn.Module):
         log_p1, log_p2 = self.output_layer(m0, m1, m2, c_mask) # (bs, context_len, 1)
 
         return log_p1, log_p2
+
+class TransformerXL(nn.Module):
+    def __init__(self, word_vectors, char2idx, device):
+        super(TransformerXL, self).__init__()
+        self.device = device
+        # input embedding layer
+        d_char = 200
+        # d_char = 20
+        word_dropout = 0.1
+        # word_dropout = 0
+        char_dropout = 0.05
+        # char_dropout = 0
+        hidden_size = 500
+        # hidden_size = 320
+        highway_dropout = 0.1
+        # highway_dropout = 0
+        self.emb = qa_net_layers.InputEmbedding(word_vectors, d_char, char2idx, hidden_size, word_dropout, char_dropout, highway_dropout)
+        # embedding encoder layer
+        d_word = 500
+        # d_word = 320
+        d_conv = 128
+        kernel_size = 7
+        d_attention = 16
+        d_out = 128
+        n_conv = 4
+        n_head = 8
+        dropout = 0.1
+        memory_len = 128
+        seg_len = 64
+        # dropout = 0
+        self.emb_encoder = qa_net_layers.TXEncoderLayer(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, 1, device)
+        # context query attention layer
+        dropout = 0.1
+        self.att = qa_net_layers.ContextQueryAttentionLayer(d_out, dropout)        
+        # model encoder layer
+        d_word = 128 * 4
+        d_conv = 128
+        kernel_size = 5
+        d_attention = 16
+        d_out = 128
+        n_conv = 2
+        n_head = 8
+        dropout = 0.1
+        memory_len = 128
+        seg_len = 64
+        # dropout = 0
+        n_block = 2
+        self.model_encoder = qa_net_layers.TXModelEncoderLayer(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device)
+        # output layer
+        self.output_layer = qa_net_layers.OutputLayer(128)
+
+    def forward(self, cw_idxs, cc_idxs, qw_idxs, qc_idxs):
+        c_mask = torch.zeros_like(cw_idxs) != cw_idxs
+        # print(c_mask.size())
+        q_mask = torch.zeros_like(qw_idxs) != qw_idxs
+
+        c_emb = self.emb(cw_idxs, cc_idxs) # (bs, context_len, hidden_size)
+        # print('c_emb: {}'.format(c_emb.size()))
+        q_emb = self.emb(qw_idxs, qc_idxs) # (bs, question_len, hidden_size)
+        # print('q_emb: {}'.format(q_emb.size()))
+
+        c_enc = self.emb_encoder(c_emb, c_mask) # (bs, context_len, dout)
+        # print('c_enc: {}'.format(c_enc.size()))
+        q_enc = self.emb_encoder(q_emb, q_mask) # (bs, context_len, dout)
+        # print('q_enc: {}'.format(q_enc.size()))
+
+        att = self.att(c_enc, q_enc, c_mask, q_mask) # (bs, context_len, 4*dout)
+        # print('att: {}'.format(att.size()))
+
+        # print('model encoder layer')
+        m0, m1, m2 = self.model_encoder(att, mask=c_mask)  # (bs, context_len, dout)
+        # print('m0: {}'.format(m0.size()))
+        # print('m1: {}'.format(m1.size()))
+        # print('m2: {}'.format(m2.size()))
+
+        log_p1, log_p2 = self.output_layer(m0, m1, m2, c_mask) # (bs, context_len, 1)
+
+        return log_p1, log_p2

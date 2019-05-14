@@ -17,11 +17,12 @@ import util
 from args import get_train_args
 from collections import OrderedDict
 from json import dumps
-from models import QANet
+from models import QANet, TransformerXL
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from ujson import load as json_load
 from util import collate_fn, SQuAD
+import os
 
 
 def main(args):
@@ -49,8 +50,8 @@ def main(args):
         char2idx = json_load(f)
     # Get model
     log.info('Building model...')
-    model = QANet(word_vectors=word_vectors,
-                  char2idx = char2idx)
+    # model = QANet(word_vectors=word_vectors, char2idx = char2idx)
+    model = TransformerXL(word_vectors=word_vectors, char2idx = char2idx, device=device)
     model = nn.DataParallel(model, args.gpu_ids)
     if args.load_path:
         log.info('Loading checkpoint from {}...'.format(args.load_path))
@@ -76,12 +77,17 @@ def main(args):
 
     # Get data loader
     log.info('Building dataset...')
-    train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)
-    train_loader = data.DataLoader(train_dataset,
-                                   batch_size=args.batch_size,
-                                   shuffle=True,
-                                   num_workers=args.num_workers,
-                                   collate_fn=collate_fn)
+    outfile = '/content/dataset/train_light.npz'
+    # outfile2 = '/content/dataset/train_light2.npz'
+    dataset1 = np.load(args.train_record_file)
+                      
+    # train_dataset = SQuAD(outfile, args.use_squad_v2)
+    # # train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)
+    # train_loader = data.DataLoader(train_dataset,
+    #                                batch_size=args.batch_size,
+    #                                shuffle=True,
+    #                                num_workers=args.num_workers,
+    #                                collate_fn=collate_fn)
     dev_dataset = SQuAD(args.dev_record_file, args.use_squad_v2)
     dev_loader = data.DataLoader(dev_dataset,
                                  batch_size=args.batch_size,
@@ -92,8 +98,35 @@ def main(args):
     # Train
     log.info('Training...')
     steps_till_eval = args.eval_steps
-    epoch = step // len(train_dataset)
+    train_dataset_len = len(dataset1['context_idxs'])
+    train_epoch_len = train_dataset_len // 2
+    print('train_dataset_len: ' + str(train_dataset_len))
+    print('train_epoch_len: ' + str(train_epoch_len))
+    epoch = step // train_epoch_len
+    idx = np.random.choice(train_dataset_len, train_epoch_len, replace=False)
     while epoch != args.num_epochs:
+        if epoch % 2 == 0:
+            idx = np.random.choice(train_dataset_len, train_epoch_len, replace=False)
+        else:
+            idx2 = list(set(range(train_dataset_len)) - set(idx))
+            idx = idx2
+        train_dataset = None
+        train_loader = None
+        np.savez(outfile, context_idxs=dataset1['context_idxs'][idx],
+                        context_char_idxs=dataset1['context_char_idxs'][idx], 
+                        ques_idxs=dataset1['ques_idxs'][idx],
+                        ques_char_idxs=dataset1['ques_char_idxs'][idx],
+                        y1s=dataset1['y1s'][idx],
+                        y2s=dataset1['y2s'][idx],
+                        ids=dataset1['ids'][idx])
+        train_dataset = SQuAD(outfile, args.use_squad_v2)
+        # train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)
+        train_loader = data.DataLoader(train_dataset,
+                                    batch_size=args.batch_size,
+                                    shuffle=True,
+                                    num_workers=args.num_workers,
+                                    collate_fn=collate_fn)
+
         epoch += 1
         log.info('Starting epoch {}...'.format(epoch))
         with torch.enable_grad(), \
@@ -110,7 +143,7 @@ def main(args):
                 y1, y2 = y1.to(device), y2.to(device)
                 loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
                 loss_val = loss.item()
-                print('loss val: {}'.format(loss_val))
+                # print('loss val: {}'.format(loss_val))
 
                 # Backward
                 loss.backward()
@@ -190,8 +223,8 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
             # print('y2: {}'.format(y2))
 
             # Log info
-            progress_bar.update(batch_size)
-            progress_bar.set_postfix(NLL=nll_meter.avg)
+            # progress_bar.update(batch_size)
+            # progress_bar.set_postfix(NLL=nll_meter.avg)
 
             preds, _ = util.convert_tokens(gold_dict,
                                            ids.tolist(),
