@@ -437,6 +437,10 @@ class SegmentRecurrentHead(nn.Module):
         pe = pe.unsqueeze(0) # (1, max_length, d)
         return pe
 
+    def eval(self):
+        print("Evaluation code")
+
+
 class MultiHeadSegmentRecurrent(nn.Module):
     def __init__(self, memory_len, seg_len, d_in, d_out, n_head, device):
         super(MultiHeadSegmentRecurrent, self).__init__()
@@ -545,15 +549,17 @@ class TXModelEncoderLayer(nn.Module):
     def __init__(self, d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers=1):
         super(TXModelEncoderLayer, self).__init__()
         self.input_conv = nn.Conv1d(d_word, d_conv, 1)
-        self.tx_encoder_layer = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
+        self.tx_encoder_layer1 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
+        self.tx_encoder_layer2 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
+        self.tx_encoder_layer3 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
         nn.init.xavier_uniform_(self.input_conv.weight)
 
     def forward(self, x, mask):
         x = x.transpose(-1, -2)
         x = self.input_conv(x)
         x = x.transpose(-1, -2)
-        m0 = self.tx_encoder_layer(x, mask) # (batch_size, n_context, dout)
-        m1 = self.tx_encoder_layer(m0, mask) # (batch_size, n_context, dout)
-        m2 = self.tx_encoder_layer(m1, mask) # (batch_size, n_context, dout)
+        m0 = self.tx_encoder_layer1(x, mask) # (batch_size, n_context, dout)
+        m1 = self.tx_encoder_layer2(m0, mask) # (batch_size, n_context, dout)
+        m2 = self.tx_encoder_layer3(m1, mask) # (batch_size, n_context, dout)
         # return m0, m1, m2
         return m0, m1, m2

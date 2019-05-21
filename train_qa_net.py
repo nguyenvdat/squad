@@ -163,7 +163,8 @@ def main(args):
                                step)
 
                 steps_till_eval -= batch_size
-                if steps_till_eval <= 0:
+                # if steps_till_eval <= 0:
+                if True:
                     steps_till_eval = args.eval_steps
 
                     # Evaluate and save checkpoint
