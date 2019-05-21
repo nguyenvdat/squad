@@ -174,7 +174,7 @@ class TransformerXL(nn.Module):
         memory_len = 128
         seg_len = 64
         # dropout = 0
-        self.emb_encoder = qa_net_layers.TXEncoderLayer(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, 1, device)
+        self.emb_encoder = qa_net_layers.TXEncoderLayer(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, 1, device, 2)
         # context query attention layer
         dropout = 0.1
         self.att = qa_net_layers.ContextQueryAttentionLayer(d_out, dropout)        
@@ -191,7 +191,7 @@ class TransformerXL(nn.Module):
         seg_len = 64
         # dropout = 0
         n_block = 2
-        self.model_encoder = qa_net_layers.TXModelEncoderLayer(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device)
+        self.model_encoder = qa_net_layers.TXModelEncoderLayer(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, 2)
         # output layer
         self.output_layer = qa_net_layers.OutputLayer(128)
 
