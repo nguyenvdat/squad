@@ -363,10 +363,14 @@ class PositionalEncoder(nn.Module):
 class SegmentRecurrentHead(nn.Module):
     def __init__(self, memory_len, seg_len, d_in, d_out, device):
         super(SegmentRecurrentHead, self).__init__()
-        M = memory_len
-        L = seg_len
-        self.R = self.get_relative_position_encoder(d_in, M + 2*L - 1, device) # (1, M + 2*L, d_in)
-        self.R_center = M + L - 1
+        print('memory len')
+        print(memory_len)
+        self.M = memory_len
+        self.L = seg_len
+        self.R = self.get_relative_position_encoder(d_in, self.M + 2*self.L - 1, device) # (1, M + 2*L, d_in)
+        self.R_center = self.M + self.L - 1
+        self.R_training = self.R
+        self.R_center_training = self.R_center
         self.Wq = nn.Linear(d_in, d_out)
         self.Wke = nn.Linear(d_in, d_out)
         self.Wkr = nn.Linear(d_in, d_out)
@@ -437,10 +441,6 @@ class SegmentRecurrentHead(nn.Module):
         pe = pe.unsqueeze(0) # (1, max_length, d)
         return pe
 
-    def eval(self):
-        print("Evaluation code")
-
-
 class MultiHeadSegmentRecurrent(nn.Module):
     def __init__(self, memory_len, seg_len, d_in, d_out, n_head, device):
         super(MultiHeadSegmentRecurrent, self).__init__()
@@ -452,17 +452,19 @@ class MultiHeadSegmentRecurrent(nn.Module):
         return torch.cat(sr_heads, 2) # (bs, L, d_out * n_head)
 
 class SegmentRecurrent(nn.Module):
-    def __init__(self, memory_len, seg_len, d_in, d_out, n_head, device, n_layers):
+    def __init__(self, memory_len_train, memory_len_eval, seg_len, d_in, d_out, n_head, device, n_layers):
         super(SegmentRecurrent, self).__init__()
-        assert memory_len % seg_len == 0
-        self.memory_len = memory_len
+        assert memory_len_train % seg_len == 0
+        assert memory_len_eval % seg_len == 0
+        self.memory_len_train = memory_len_train
+        self.memory_len_eval = memory_len_eval
         self.seg_len = seg_len
         self.d_in = d_in
         self.d_out = d_out
         self.n_head = n_head
-        self.multi_heads_layers = [MultiHeadSegmentRecurrent(memory_len, seg_len, d_in, d_out, n_head, device)]
+        self.multi_heads_layers = [MultiHeadSegmentRecurrent(memory_len_eval, seg_len, d_in, d_out, n_head, device)]
         for l in range(1, n_layers):
-            self.multi_heads_layers.append(MultiHeadSegmentRecurrent(memory_len, seg_len, d_out*n_head, d_out, n_head, device))
+            self.multi_heads_layers.append(MultiHeadSegmentRecurrent(memory_len_eval, seg_len, d_out*n_head, d_out, n_head, device))
         self.multi_heads_layers = nn.ModuleList(self.multi_heads_layers)
         self.n_layers = n_layers
         self.device = device
@@ -470,11 +472,12 @@ class SegmentRecurrent(nn.Module):
     def forward(self, x, mask):
         bs, s_len, _ = x.size()
         prev_layer = x
+        memory_len = self.memory_len_train if self.training else self.memory_len_eval
         for l in range(self.n_layers):
             start_idx = 0
-            mask_prev = torch.zeros((bs, self.memory_len), dtype=torch.uint8, device=self.device)
+            mask_prev = torch.zeros((bs, memory_len), dtype=torch.uint8, device=self.device)
             d_in = self.d_in if l == 0 else self.d_out * self.n_head
-            h_prev = torch.zeros((bs, self.memory_len, d_in), dtype=torch.float32, device=self.device)
+            h_prev = torch.zeros((bs, memory_len, d_in), dtype=torch.float32, device=self.device)
             out = torch.zeros((bs, s_len, self.d_out * self.n_head), device=self.device)
             while start_idx + self.seg_len < s_len:
                 h = prev_layer[:, start_idx: start_idx + self.seg_len]
@@ -496,7 +499,7 @@ class SegmentRecurrent(nn.Module):
         return out # (bs, sentence_len, d_out * n_head)
 
 class TXEncoderBlock(nn.Module):
-    def __init__(self, d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, device, n_layers):
+    def __init__(self, d_word, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, device, n_layers):
         super(TXEncoderBlock, self).__init__()
         if d_word != d_conv:
             self.input_conv = nn.Conv1d(d_word, d_conv, 1)
@@ -506,7 +509,7 @@ class TXEncoderBlock(nn.Module):
             self.input_same_shape = True
         depthwise_conv = DepthwiseSeparableConvLayer(d_conv, kernel_size, d_conv)
         self.depthwise_conv_layers = clones(ResNormLayer(d_conv, depthwise_conv, dim=-2), n_conv)
-        segment_recurrent = SegmentRecurrent(memory_len, seg_len, d_conv, d_attention, n_head, device, n_layers)
+        segment_recurrent = SegmentRecurrent(memory_len_train, memory_len_eval, seg_len, d_conv, d_attention, n_head, device, n_layers)
         # multihead_attention = MultiHeadAttentionLayer(n_head, d_conv, d_attention)
         self.segment_recurrent_layer = ResNormLayer(d_conv, segment_recurrent)
         feed_forward_layer = FeedForwardLayer(d_attention * n_head, d_out)
@@ -524,14 +527,14 @@ class TXEncoderBlock(nn.Module):
         return x
 
 class TXEncoderLayer(nn.Module):
-    def __init__(self, d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers):
+    def __init__(self, d_word, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers):
         super(TXEncoderLayer, self).__init__()
         blocks = []
         for i in range(n_block):
             if i == 0:
-                tx_encoder_block = TXEncoderBlock(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, device, n_layers)
+                tx_encoder_block = TXEncoderBlock(d_word, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, device, n_layers)
             else:
-                tx_encoder_block = TXEncoderBlock(d_conv, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, device, n_layers)
+                tx_encoder_block = TXEncoderBlock(d_conv, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, device, n_layers)
             blocks.append(tx_encoder_block)
         self.tx_encoder_blocks = nn.ModuleList(blocks)
         self.dropout = nn.Dropout(dropout)
@@ -546,12 +549,12 @@ class TXEncoderLayer(nn.Module):
         return self.dropout(x)
 
 class TXModelEncoderLayer(nn.Module):
-    def __init__(self, d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers=1):
+    def __init__(self, d_word, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers=1):
         super(TXModelEncoderLayer, self).__init__()
         self.input_conv = nn.Conv1d(d_word, d_conv, 1)
-        self.tx_encoder_layer1 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
-        self.tx_encoder_layer2 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
-        self.tx_encoder_layer3 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
+        self.tx_encoder_layer1 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
+        self.tx_encoder_layer2 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
+        self.tx_encoder_layer3 = TXEncoderLayer(d_conv, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, n_layers)
         nn.init.xavier_uniform_(self.input_conv.weight)
 
     def forward(self, x, mask):

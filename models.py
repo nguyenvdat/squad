@@ -1,7 +1,7 @@
 """Top-level model classes.
 
 Author:
-    Chris Chute (chute@stanford.edu)
+    Dat Nguyen (QANet and TransformerXL part)
 """
 
 import layers
@@ -171,10 +171,11 @@ class TransformerXL(nn.Module):
         n_conv = 4
         n_head = 8
         dropout = 0.1
-        memory_len = 128
-        seg_len = 64
+        memory_len_train = 64
+        memory_len_eval = 128
+        seg_len = 32
         # dropout = 0
-        self.emb_encoder = qa_net_layers.TXEncoderLayer(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, 1, device, 1)
+        self.emb_encoder = qa_net_layers.TXEncoderLayer(d_word, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, dropout, 1, device, 1)
         # context query attention layer
         dropout = 0.1
         self.att = qa_net_layers.ContextQueryAttentionLayer(d_out, dropout)        
@@ -187,11 +188,12 @@ class TransformerXL(nn.Module):
         n_conv = 2
         n_head = 8
         dropout = 0.1
-        memory_len = 128
-        seg_len = 64
+        memory_len_train = 64
+        memory_len_eval = 128
+        seg_len = 32
         # dropout = 0
         n_block = 2
-        self.model_encoder = qa_net_layers.TXModelEncoderLayer(d_word, d_conv, kernel_size, memory_len, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, 1)
+        self.model_encoder = qa_net_layers.TXModelEncoderLayer(d_word, d_conv, kernel_size, memory_len_train, memory_len_eval, seg_len, d_attention, d_out, n_conv, n_head, dropout, n_block, device, 1)
         # output layer
         self.output_layer = qa_net_layers.OutputLayer(128)
 
