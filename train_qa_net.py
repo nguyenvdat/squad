@@ -2,6 +2,7 @@
 
 Author:
     Chris Chute (chute@stanford.edu)
+    Dat Nguyen
 """
 
 import numpy as np
@@ -100,6 +101,7 @@ def main(args):
     steps_till_eval = args.eval_steps
     train_dataset_len = len(dataset1['context_idxs'])
     train_epoch_len = train_dataset_len // 2
+    # train_epoch_len = 1000
     print('train_dataset_len: ' + str(train_dataset_len))
     print('train_epoch_len: ' + str(train_epoch_len))
     epoch = step // train_epoch_len
@@ -163,8 +165,8 @@ def main(args):
                                step)
 
                 steps_till_eval -= batch_size
-                # if steps_till_eval <= 0:
-                if True:
+                if steps_till_eval <= 0:
+                # if True:
                     steps_till_eval = args.eval_steps
 
                     # Evaluate and save checkpoint
