@@ -20,6 +20,7 @@ import layers
 from qa_net_layers import *
 import util
 import pickle
+from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
 
 def main():
     # test_input_embedding()
@@ -190,5 +191,88 @@ def test_transformer_xl_model():
     out = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
     print(out.size())
 
+def test_bert():
+    args = get_setup_args()
+    with open(args.word2idx_file, "r") as f:
+        word2idx = json_load(f)
+    idx2word = {idx:word for word, idx in word2idx.items()}
+    idx2word[0] = "[PAD]"
+    idx2word[1] = "[UNK]"
+    # print(idx2word)
+    cw_idxs = torch.tensor([[    1,   256,   128,  1486,  4580,  4186,  7723,     6,    59, 17032,
+             9,  1849,    39,     0,     0,     0,     0,     0,     0,     0,
+             0,     0,     0],
+        [    1,   191,   534,     7,  2505,   471,    12, 15309,    26,     4,
+          3158,  1392,    39,     0,     0,     0,     0,     0,     0,     0,
+             0,     0,     0]])
+    qw_idxs = torch.tensor([[    1,   256,   128,  1486,  4580,  4186,  7723,     6,    59, 17032,
+             9,  1849,    39,     0,     0,     0,     0,     0,     0,     0,
+             0,     0,     0],
+        [    1,   191,   534,     7,  2505,   471,    12, 15309,    26,     4,
+          3158,  1392,    39,     0,     0,     0,     0,     0,     0,     0,
+             0,     0,     0]])
+    tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
+    indexed_tokens_batch = []
+    segments_ids_batch = []
+
+    for i in range(len(cw_idxs)):
+        q = qw_idxs[i]
+        c = cw_idxs[i]
+        q_text = ' '.join([idx2word[idx.item()] for idx in q])
+        q_text = '[CLS] ' + q_text + ' [SEP] ' 
+        c_text = ' '.join([idx2word[idx.item()] for idx in c])
+        c_text = c_text + ' [SEP]' 
+        text = q_text + c_text
+        # print(text)
+        tokenized_text = tokenizer.tokenize(text)
+        indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
+        indexed_tokens_batch.append(indexed_tokens)
+        segments_ids_batch.append([0] * (len(q) + 2) + [1] * (len(c) + 1))
+        print(i)
+        print(len(indexed_tokens))
+        print(len(segments_ids_batch[i]))
+    
+
+    model = BertModel.from_pretrained('bert-base-uncased')
+    model.eval()
+
+    tokens_tensor = torch.tensor(indexed_tokens_batch)
+    segments_tensors = torch.tensor(segments_ids_batch)
+    print('tensor size: ')
+    print(tokens_tensor.size())
+    print(segments_tensors.size())
+    # If you have a GPU, put everything on cuda
+    tokens_tensor = tokens_tensor.to('cuda')
+    segments_tensors = segments_tensors.to('cuda')
+    model.to('cuda')
+
+    # Predict hidden states features for each layer
+    with torch.no_grad():
+        encoded_layers, _ = model(tokens_tensor, segments_tensors)
+    print(len(encoded_layers))
+    print(encoded_layers[-1].size())
+
+    # text1 = "[CLS] Who was Jim Henson ? [SEP] Jim Henson was a puppeteer [SEP]"
+    # text2 = "[CLS] Who was Jim Henson ? [SEP] Jim Henson was a really good puppeteer [SEP]"
+    # text = [text1, text2]
+    # tokenized_text = tokenizer.tokenize(text)
+    # indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
+    # print('indexed tokens')
+    # print(indexed_tokens)
+    # segments_ids = [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1]
+    # tokens_tensor = torch.tensor([indexed_tokens])
+    # segments_tensors = torch.tensor([segments_ids])
+    # model = BertModel.from_pretrained('bert-large-uncased')
+    # model.eval()
+    # tokens_tensor = tokens_tensor.to('cuda')
+    # segments_tensors = segments_tensors.to('cuda')
+    # model.to('cuda')
+
+    # # Predict hidden states features for each layer
+    # with torch.no_grad():
+    #     encoded_layers, _ = model(tokens_tensor, segments_tensors)
+    # print(encoded_layers[-1].size())
+
 if __name__ == '__main__':
-    main()
+    # main()
+    test_bert()

@@ -49,6 +49,9 @@ def main(args):
     # setup_args = get_setup_args()
     with open(args.char2idx_file, "r") as f:
         char2idx = json_load(f)
+    with open(args.word2idx_file, "r") as f:
+        word2idx = json_load(f)
+    idx2word = {idx:word for word, idx in word2idx.items()}
     # Get model
     log.info('Building model...')
     # model = QANet(word_vectors=word_vectors, char2idx = char2idx)
@@ -137,6 +140,11 @@ def main(args):
                 # Setup for forward
                 cw_idxs = cw_idxs.to(device)
                 qw_idxs = qw_idxs.to(device)
+                print(cw_idxs.size())
+                print(qw_idxs.size())
+                print(y1)
+                print(y2)
+                print()
                 batch_size = cw_idxs.size(0)
                 optimizer.zero_grad()
 

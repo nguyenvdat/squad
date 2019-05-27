@@ -33,10 +33,11 @@ def get_setup_args():
                         default='./data/test_meta.json')
     parser.add_argument('--word2idx_file',
                         type=str,
-                        default='./data/word2idx.json')
+                        default='/content/dataset/word2idx.json')
     parser.add_argument('--char2idx_file',
                         type=str,
-                        default='./data/char2idx.json')
+                        # default='./data/char2idx.json')
+                        default='/content/dataset/char2idx.json')
     parser.add_argument('--answer_file',
                         type=str,
                         default='./data/answer.json')
@@ -135,9 +136,13 @@ def get_train_args():
                         type=float,
                         default=0.999,
                         help='Decay rate for exponential moving average of parameters.')
+    parser.add_argument('--word2idx_file',
+                        type=str,
+                        default='/content/dataset/word2idx.json')
     parser.add_argument('--char2idx_file',
                         type=str,
-                        default='./data/char2idx.json')
+                        # default='./data/char2idx.json')
+                        default='/content/dataset/char2idx.json')
 
     args = parser.parse_args()
 
@@ -188,7 +193,8 @@ def add_common_args(parser):
                         default='/content/dataset/train.npz')
     parser.add_argument('--dev_record_file',
                         type=str,
-                        default='./data/dev.npz')
+                        # default='./data/dev.npz')
+                        default='/content/dataset/dev.npz')
                         # default='/Volumes/Blazing/data/dev.npz')
     parser.add_argument('--test_record_file',
                         type=str,
@@ -196,7 +202,8 @@ def add_common_args(parser):
                         default='/content/dataset/test.npz')
     parser.add_argument('--word_emb_file',
                         type=str,
-                        default='./data/word_emb.json')
+                        # default='./data/word_emb.json')
+                        default='/content/dataset/word_emb.json')
                         # default='/Volumes/Blazing/data/word_emb.json')
     parser.add_argument('--char_emb_file',
                         type=str,
