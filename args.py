@@ -139,6 +139,9 @@ def get_train_args():
     parser.add_argument('--word2idx_file',
                         type=str,
                         default='/content/dataset/word2idx.json')
+    parser.add_argument('--idx2word_file',
+                        type=str,
+                        default='/content/dataset/idx2word.json')
     parser.add_argument('--char2idx_file',
                         type=str,
                         # default='./data/char2idx.json')
@@ -215,7 +218,8 @@ def add_common_args(parser):
                         default='/content/dataset/train_eval.json')
     parser.add_argument('--dev_eval_file',
                         type=str,
-                        default='./data/dev_eval.json')
+                        # default='./data/dev_eval.json')
+                        default='/content/dataset/dev_eval.json')
     parser.add_argument('--test_eval_file',
                         type=str,
                         default='./data/test_eval.json')
@@ -242,7 +246,7 @@ def add_train_test_args(parser):
                         help='Base directory for saving information.')
     parser.add_argument('--batch_size',
                         type=int,
-                        default=32,
+                        default=8,
                         help='Batch size per GPU. Scales automatically when \
                               multiple GPUs are available.')
     parser.add_argument('--use_squad_v2',

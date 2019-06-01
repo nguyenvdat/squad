@@ -18,7 +18,7 @@ import util
 from args import get_train_args
 from collections import OrderedDict
 from json import dumps
-from models import QANet, TransformerXL
+from models import QANet, TransformerXL, BertMd
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from ujson import load as json_load
@@ -49,13 +49,12 @@ def main(args):
     # setup_args = get_setup_args()
     with open(args.char2idx_file, "r") as f:
         char2idx = json_load(f)
-    with open(args.word2idx_file, "r") as f:
-        word2idx = json_load(f)
-    idx2word = {idx:word for word, idx in word2idx.items()}
+    with open(args.idx2word_file, "r") as f:
+        idx2word = json_load(f)
     # Get model
     log.info('Building model...')
     # model = QANet(word_vectors=word_vectors, char2idx = char2idx)
-    model = TransformerXL(word_vectors=word_vectors, char2idx = char2idx, device=device)
+    model = BertMd(idx2word)
     model = nn.DataParallel(model, args.gpu_ids)
     if args.load_path:
         log.info('Loading checkpoint from {}...'.format(args.load_path))
@@ -84,7 +83,7 @@ def main(args):
     outfile = '/content/dataset/train_light.npz'
     # outfile2 = '/content/dataset/train_light2.npz'
     dataset1 = np.load(args.train_record_file)
-                      
+
     # train_dataset = SQuAD(outfile, args.use_squad_v2)
     # # train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)
     # train_loader = data.DataLoader(train_dataset,
@@ -103,53 +102,53 @@ def main(args):
     log.info('Training...')
     steps_till_eval = args.eval_steps
     train_dataset_len = len(dataset1['context_idxs'])
-    train_epoch_len = train_dataset_len // 2
-    # train_epoch_len = 1000
+    # train_epoch_len = train_dataset_len // 2
+    train_epoch_len = 20000
     print('train_dataset_len: ' + str(train_dataset_len))
     print('train_epoch_len: ' + str(train_epoch_len))
     epoch = step // train_epoch_len
     idx = np.random.choice(train_dataset_len, train_epoch_len, replace=False)
     while epoch != args.num_epochs:
-        if epoch % 2 == 0:
-            idx = np.random.choice(train_dataset_len, train_epoch_len, replace=False)
-        else:
-            idx2 = list(set(range(train_dataset_len)) - set(idx))
-            idx = idx2
+        idx = np.random.choice(
+            train_dataset_len, train_epoch_len, replace=False)
+        # if epoch % 2 == 0:
+        #     idx = np.random.choice(
+        #         train_dataset_len, train_epoch_len, replace=False)
+        # else:
+        #     idx2 = list(set(range(train_dataset_len)) - set(idx))
+        #     idx = idx2
         train_dataset = None
         train_loader = None
         np.savez(outfile, context_idxs=dataset1['context_idxs'][idx],
-                        context_char_idxs=dataset1['context_char_idxs'][idx], 
-                        ques_idxs=dataset1['ques_idxs'][idx],
-                        ques_char_idxs=dataset1['ques_char_idxs'][idx],
-                        y1s=dataset1['y1s'][idx],
-                        y2s=dataset1['y2s'][idx],
-                        ids=dataset1['ids'][idx])
+                 context_char_idxs=dataset1['context_char_idxs'][idx],
+                 ques_idxs=dataset1['ques_idxs'][idx],
+                 ques_char_idxs=dataset1['ques_char_idxs'][idx],
+                 y1s=dataset1['y1s'][idx],
+                 y2s=dataset1['y2s'][idx],
+                 ids=dataset1['ids'][idx])
         train_dataset = SQuAD(outfile, args.use_squad_v2)
         # train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)
         train_loader = data.DataLoader(train_dataset,
-                                    batch_size=args.batch_size,
-                                    shuffle=True,
-                                    num_workers=args.num_workers,
-                                    collate_fn=collate_fn)
+                                       batch_size=args.batch_size,
+                                       shuffle=True,
+                                       num_workers=args.num_workers,
+                                       collate_fn=collate_fn)
 
         epoch += 1
         log.info('Starting epoch {}...'.format(epoch))
         with torch.enable_grad(), \
                 tqdm(total=len(train_loader.dataset)) as progress_bar:
+                # tqdm(total=len(train_loader.dataset)) as progress_bar:
             for cw_idxs, cc_idxs, qw_idxs, qc_idxs, y1, y2, ids in train_loader:
+                # for cw_idxs, cc_idxs, qw_idxs, qc_idxs, y1, y2, ids in dev_loader:
                 # Setup for forward
                 cw_idxs = cw_idxs.to(device)
                 qw_idxs = qw_idxs.to(device)
-                print(cw_idxs.size())
-                print(qw_idxs.size())
-                print(y1)
-                print(y2)
-                print()
                 batch_size = cw_idxs.size(0)
                 optimizer.zero_grad()
 
                 # Forward
-                log_p1, log_p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
+                log_p1, log_p2, y1, y2 = model(cw_idxs, qw_idxs, y1, y2)
                 y1, y2 = y1.to(device), y2.to(device)
                 loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
                 loss_val = loss.item()
@@ -157,7 +156,8 @@ def main(args):
 
                 # Backward
                 loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                nn.utils.clip_grad_norm_(
+                    model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 scheduler.step(step // batch_size)
                 ema(model, step // batch_size)
@@ -174,7 +174,7 @@ def main(args):
 
                 steps_till_eval -= batch_size
                 if steps_till_eval <= 0:
-                # if True:
+                    # if True:
                     steps_till_eval = args.eval_steps
 
                     # Evaluate and save checkpoint
@@ -220,7 +220,7 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
             batch_size = cw_idxs.size(0)
 
             # Forward
-            log_p1, log_p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
+            log_p1, log_p2, y1, y2, y_maps = model(cw_idxs, qw_idxs, y1, y2)
             y1, y2 = y1.to(device), y2.to(device)
             loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
             nll_meter.update(loss.item(), batch_size)
@@ -237,10 +237,12 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
             # progress_bar.update(batch_size)
             # progress_bar.set_postfix(NLL=nll_meter.avg)
 
+            starts = y_maps[range(len(y_maps)), starts.tolist()]
+            ends = y_maps[range(len(y_maps)), ends.tolist()]
             preds, _ = util.convert_tokens(gold_dict,
                                            ids.tolist(),
-                                           starts.tolist(),
-                                           ends.tolist(),
+                                           starts,
+                                           ends,
                                            use_squad_v2)
             pred_dict.update(preds)
 
